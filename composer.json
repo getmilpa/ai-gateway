@@ -5,8 +5,8 @@
   "license": "Apache-2.0",
   "require": {
     "php": ">=8.3",
-    "milpa/core": "^0.4",
-    "milpa/tool-runtime": "^0.4",
+    "milpa/core": "^0.5",
+    "milpa/tool-runtime": "^0.5",
     "guzzlehttp/guzzle": "^7.10",
     "guzzlehttp/psr7": "^2.7",
     "psr/http-client": "^1.0",
