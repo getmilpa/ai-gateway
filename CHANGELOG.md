@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/getmilpa/ai-gateway/compare/v0.2.0...v0.2.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* require milpa/core ^0.5 and milpa/tool-runtime ^0.5 ([e221b3b](https://github.com/getmilpa/ai-gateway/commit/e221b3b283d2d64f667b5a02faa8f8052a4c2dcb))
+
 ## [0.2.0](https://github.com/getmilpa/ai-gateway/compare/v0.1.1...v0.2.0) (2026-07-08)
 
 
