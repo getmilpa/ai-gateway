@@ -6,7 +6,7 @@
   "require": {
     "php": ">=8.3",
     "milpa/core": "^0.3",
-    "milpa/tool-runtime": "^0.2",
+    "milpa/tool-runtime": "^0.3",
     "guzzlehttp/guzzle": "^7.10",
     "psr/log": "^3"
   },
