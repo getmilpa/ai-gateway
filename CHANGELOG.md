@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/getmilpa/ai-gateway/compare/v0.1.1...v0.2.0) (2026-07-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* injectable PSR-18 HTTP client + explicit provider-error guard
+
+### Features
+
+* injectable PSR-18 HTTP client + explicit provider-error guard ([22c4b73](https://github.com/getmilpa/ai-gateway/commit/22c4b73c3bb8339bf70fcbda1d226456e1f9cd45))
+
 ## [0.1.1](https://github.com/getmilpa/ai-gateway/compare/v0.1.0...v0.1.1) (2026-07-08)
 
 
