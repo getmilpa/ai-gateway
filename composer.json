@@ -5,9 +5,13 @@
   "license": "Apache-2.0",
   "require": {
     "php": ">=8.3",
-    "milpa/core": "^0.3",
-    "milpa/tool-runtime": "^0.3",
+    "milpa/core": "^0.4",
+    "milpa/tool-runtime": "^0.4",
     "guzzlehttp/guzzle": "^7.10",
+    "guzzlehttp/psr7": "^2.7",
+    "psr/http-client": "^1.0",
+    "psr/http-factory": "^1.1",
+    "psr/http-message": "^2.0",
     "psr/log": "^3"
   },
   "require-dev": {

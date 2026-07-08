@@ -15,8 +15,13 @@ declare(strict_types=1);
 
 namespace Milpa\AiGateway\Tests;
 
+use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Milpa\AiGateway\LlmService;
+use Psr\Http\Client\ClientExceptionInterface;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
 
 class LlmServiceTest extends TestCase
 {
@@ -327,16 +332,18 @@ class LlmServiceTest extends TestCase
         $this->assertEquals('my-secret-key', $property->getValue($service));
     }
 
-    public function testClientIsCreatedWithTimeout(): void
+    public function testDefaultHttpClientIsGuzzle(): void
     {
+        // No ClientInterface injected -> falls back to a Guzzle client (PSR-18 native).
         $service = new LlmService('api-key');
 
         $reflection = new \ReflectionClass($service);
-        $property = $reflection->getProperty('client');
+        $property = $reflection->getProperty('httpClient');
         $property->setAccessible(true);
 
         $client = $property->getValue($service);
         $this->assertInstanceOf(\GuzzleHttp\Client::class, $client);
+        $this->assertInstanceOf(\Psr\Http\Client\ClientInterface::class, $client);
     }
 
     public function testImplementsLlmServiceInterface(): void
@@ -348,4 +355,227 @@ class LlmServiceTest extends TestCase
             $service
         );
     }
+
+    // ========== PSR-18 seam: fake ClientInterface, no network ==========
+    //
+    // Before the seam, LlmService built its Guzzle client internally — generateResponse()'s
+    // OpenAI/Anthropic HTTP paths were completely untestable without a real network call. The
+    // constructor-injectable ClientInterface fixes that; these are the tests that friction was
+    // blocking.
+
+    public function testGenerateResponseSendsOpenAiRequestThroughInjectedClient(): void
+    {
+        $response = new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'choices' => [
+                ['message' => ['role' => 'assistant', 'content' => 'Hello from OpenAI']],
+            ],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $fakeClient);
+
+        $result = $service->generateResponse('Hi there');
+
+        $this->assertSame(['role' => 'assistant', 'content' => 'Hello from OpenAI'], $result);
+
+        $sent = $fakeClient->lastRequest;
+        $this->assertNotNull($sent);
+        $this->assertSame('POST', $sent->getMethod());
+        $this->assertSame('https://api.openai.com/v1/chat/completions', (string) $sent->getUri());
+        $this->assertSame('Bearer api-key', $sent->getHeaderLine('Authorization'));
+
+        $payload = json_decode((string) $sent->getBody(), true);
+        $this->assertSame('gpt-4o', $payload['model']);
+        $this->assertSame('Hi there', $payload['messages'][0]['content']);
+    }
+
+    public function testGenerateResponseSendsAnthropicRequestThroughInjectedClient(): void
+    {
+        $response = new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [
+                ['type' => 'text', 'text' => 'Hello from Claude'],
+            ],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('api-key', 'claude-3-sonnet', 'anthropic', httpClient: $fakeClient);
+
+        $result = $service->generateResponse('Hi there');
+
+        $this->assertSame('assistant', $result['role']);
+        $this->assertSame('Hello from Claude', $result['content']);
+
+        $sent = $fakeClient->lastRequest;
+        $this->assertNotNull($sent);
+        $this->assertSame('POST', $sent->getMethod());
+        $this->assertSame('https://api.anthropic.com/v1/messages', (string) $sent->getUri());
+        $this->assertSame('api-key', $sent->getHeaderLine('x-api-key'));
+        $this->assertSame('2023-06-01', $sent->getHeaderLine('anthropic-version'));
+
+        $payload = json_decode((string) $sent->getBody(), true);
+        $this->assertSame('claude-3-sonnet', $payload['model']);
+        $this->assertSame(4096, $payload['max_tokens']);
+    }
+
+    public function testOpenAiClientFailureIsWrappedAsRuntimeException(): void
+    {
+        $fakeClient = new FakeHttpClient(new FakeClientException('connection refused'));
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $fakeClient);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('OpenAI API Error');
+
+        $service->generateResponse('Hi there');
+    }
+
+    public function testAnthropicClientFailureIsWrappedAsRuntimeException(): void
+    {
+        $fakeClient = new FakeHttpClient(new FakeClientException('connection refused'));
+        $service = new LlmService('api-key', 'claude-3-sonnet', 'anthropic', httpClient: $fakeClient);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Anthropic API Error');
+
+        $service->generateResponse('Hi there');
+    }
+
+    // ========== HTTP-error guard: PSR-18 never throws on 4xx/5xx ==========
+    //
+    // sendRequest() only throws ClientExceptionInterface for transport-level failures (DNS,
+    // connection refused, timeout, ...). A 401/500 comes back as an ordinary ResponseInterface
+    // — Guzzle's own PSR-18 adapter hardcodes http_errors=false for sendRequest(). Before this
+    // guard, a 401 response fell through to json_decode()+??, silently returning [] for OpenAI
+    // or throwing a `foreach() on null` PHP warning for Anthropic. These assert the fix
+    // restores the pre-PSR-18 contract: an HTTP error status raises a RuntimeException carrying
+    // the same "$provider API Error: ..." message prefix the old Guzzle-exception catch used.
+
+    public function testOpenAi401ResponseThrowsRuntimeExceptionWithMessageContract(): void
+    {
+        $response = new Response(401, ['Content-Type' => 'application/json'], (string) json_encode([
+            'error' => ['message' => 'Incorrect API key provided', 'type' => 'invalid_request_error'],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('bad-api-key', 'gpt-4o', 'openai', httpClient: $fakeClient);
+
+        try {
+            $service->generateResponse('Hi there');
+            $this->fail('Expected a RuntimeException for the 401 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('OpenAI API Error', $e->getMessage());
+            $this->assertStringContainsString('401', $e->getMessage());
+            $this->assertStringContainsString('Incorrect API key provided', $e->getMessage());
+        }
+    }
+
+    public function testOpenAi500ResponseThrowsRuntimeExceptionWithMessageContract(): void
+    {
+        $response = new Response(500, ['Content-Type' => 'application/json'], (string) json_encode([
+            'error' => ['message' => 'Internal server error', 'type' => 'server_error'],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $fakeClient);
+
+        try {
+            $service->generateResponse('Hi there');
+            $this->fail('Expected a RuntimeException for the 500 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('OpenAI API Error', $e->getMessage());
+            $this->assertStringContainsString('500', $e->getMessage());
+            $this->assertStringContainsString('Internal server error', $e->getMessage());
+        }
+    }
+
+    public function testAnthropic401ResponseThrowsRuntimeExceptionWithMessageContract(): void
+    {
+        $response = new Response(401, ['Content-Type' => 'application/json'], (string) json_encode([
+            'type' => 'error',
+            'error' => ['type' => 'authentication_error', 'message' => 'invalid x-api-key'],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('bad-api-key', 'claude-3-sonnet', 'anthropic', httpClient: $fakeClient);
+
+        try {
+            $service->generateResponse('Hi there');
+            $this->fail('Expected a RuntimeException for the 401 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Anthropic API Error', $e->getMessage());
+            $this->assertStringContainsString('401', $e->getMessage());
+            $this->assertStringContainsString('invalid x-api-key', $e->getMessage());
+        }
+    }
+
+    public function testAnthropic500ResponseThrowsRuntimeExceptionWithMessageContract(): void
+    {
+        $response = new Response(500, ['Content-Type' => 'application/json'], (string) json_encode([
+            'type' => 'error',
+            'error' => ['type' => 'api_error', 'message' => 'Internal server error'],
+        ]));
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('api-key', 'claude-3-sonnet', 'anthropic', httpClient: $fakeClient);
+
+        try {
+            $service->generateResponse('Hi there');
+            $this->fail('Expected a RuntimeException for the 500 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Anthropic API Error', $e->getMessage());
+            $this->assertStringContainsString('500', $e->getMessage());
+            $this->assertStringContainsString('Internal server error', $e->getMessage());
+        }
+    }
+
+    public function testHttpErrorResponseBodyIsTruncatedInExceptionMessage(): void
+    {
+        // A body well past the truncation threshold should not appear in full in the message —
+        // only the guard's bounded excerpt, so a large/sensitive error payload can't leak
+        // wholesale into whatever ends up catching and logging the exception.
+        $longBody = str_repeat('x', 5000);
+        $response = new Response(400, ['Content-Type' => 'text/plain'], $longBody);
+
+        $fakeClient = new FakeHttpClient($response);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $fakeClient);
+
+        try {
+            $service->generateResponse('Hi there');
+            $this->fail('Expected a RuntimeException for the 400 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertLessThan(strlen($longBody), strlen($e->getMessage()));
+            $this->assertStringContainsString('truncated', $e->getMessage());
+        }
+    }
+}
+
+/**
+ * Minimal PSR-18 test double — proves the seam works with ANY `ClientInterface`. No network,
+ * no Guzzle HTTP internals: this class only speaks PSR-7/PSR-18.
+ */
+final class FakeHttpClient implements ClientInterface
+{
+    public ?RequestInterface $lastRequest = null;
+
+    public function __construct(
+        private readonly ResponseInterface|ClientExceptionInterface|null $result = null,
+    ) {
+    }
+
+    public function sendRequest(RequestInterface $request): ResponseInterface
+    {
+        $this->lastRequest = $request;
+
+        if ($this->result instanceof ClientExceptionInterface) {
+            throw $this->result;
+        }
+
+        return $this->result ?? new Response(200, ['Content-Type' => 'application/json'], '{}');
+    }
+}
+
+/**
+ * Minimal PSR-18 client exception test double.
+ */
+final class FakeClientException extends \RuntimeException implements ClientExceptionInterface
+{
 }

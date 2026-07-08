@@ -16,8 +16,14 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 use GuzzleHttp\Client;
-use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Psr7\HttpFactory;
 use Milpa\ToolRuntime\Contracts\LlmServiceInterface;
+use Psr\Http\Client\ClientExceptionInterface;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestFactoryInterface;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -26,21 +32,56 @@ use Psr\Log\LoggerInterface;
  */
 class LlmService implements LlmServiceInterface
 {
-    private Client $client;
+    /**
+     * Shared client-level timeout (seconds) for the default Guzzle client.
+     *
+     * Before the PSR-18 seam, the Anthropic call overrode the client's 60s default with a
+     * per-request 600s timeout (`GuzzleHttp\Client::post()`'s `timeout` option) — Claude's
+     * tool-use responses can run long. `ClientInterface::sendRequest()` takes only a
+     * `RequestInterface`, with no per-call options bag, so that override has no PSR-18
+     * equivalent. Rather than force one in, the default client now uses 600s uniformly for
+     * both providers — a strictly looser ceiling for OpenAI (never fires sooner than the old
+     * 60s did) at the cost of failing slower if OpenAI itself hangs. A caller who wants the
+     * old per-provider split back can inject their own `ClientInterface`.
+     */
+    private const DEFAULT_TIMEOUT_SECONDS = 600.0;
+
+    /**
+     * Max characters of a provider's error response body kept in an exception message.
+     * The body can carry the same prompt/tool-argument content the {@see SECURITY.md}
+     * debug-logging warning covers, so error messages get a bounded excerpt rather than
+     * the raw body — enough to diagnose, not a mechanism to bulk-exfiltrate into logs.
+     */
+    private const MAX_ERROR_BODY_LENGTH = 500;
+
+    private ClientInterface $httpClient;
+    private RequestFactoryInterface $requestFactory;
+    private StreamFactoryInterface $streamFactory;
     private string $apiKey;
     private string $model;
     private string $provider;
     private ?LoggerInterface $logger;
 
-    public function __construct(string $apiKey, string $model = 'gpt-4o', string $provider = 'openai', ?LoggerInterface $logger = null)
-    {
+    public function __construct(
+        string $apiKey,
+        string $model = 'gpt-4o',
+        string $provider = 'openai',
+        ?LoggerInterface $logger = null,
+        ?ClientInterface $httpClient = null,
+        ?RequestFactoryInterface $requestFactory = null,
+        ?StreamFactoryInterface $streamFactory = null,
+    ) {
         $this->apiKey = $apiKey;
         $this->model = $model;
         $this->provider = strtolower($provider);
         $this->logger = $logger;
-        $this->client = new Client([
-            'timeout' => 60.0,
+        $this->httpClient = $httpClient ?? new Client([
+            'timeout' => self::DEFAULT_TIMEOUT_SECONDS,
         ]);
+
+        $psr17Factory = new HttpFactory();
+        $this->requestFactory = $requestFactory ?? $psr17Factory;
+        $this->streamFactory = $streamFactory ?? $psr17Factory;
     }
 
     private function log(string $message): void
@@ -96,18 +137,19 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $response = $this->client->post('https://api.openai.com/v1/chat/completions', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $this->apiKey,
-                    'Content-Type' => 'application/json',
-                ],
-                'json' => $payload,
-            ]);
+            $request = $this->buildJsonRequest('https://api.openai.com/v1/chat/completions', [
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+            ], $payload);
+
+            $response = $this->httpClient->sendRequest($request);
+
+            $this->assertSuccessStatus($response, 'OpenAI');
 
             $body = json_decode((string) $response->getBody(), true);
             return $body['choices'][0]['message'] ?? [];
 
-        } catch (GuzzleException $e) {
+        } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
         }
     }
@@ -184,15 +226,15 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $response = $this->client->post('https://api.anthropic.com/v1/messages', [
-                'headers' => [
-                    'x-api-key' => $this->apiKey,
-                    'anthropic-version' => '2023-06-01',
-                    'content-type' => 'application/json',
-                ],
-                'json' => $payload,
-                'timeout' => 600.0,
-            ]);
+            $request = $this->buildJsonRequest('https://api.anthropic.com/v1/messages', [
+                'x-api-key' => $this->apiKey,
+                'anthropic-version' => '2023-06-01',
+                'content-type' => 'application/json',
+            ], $payload);
+
+            $response = $this->httpClient->sendRequest($request);
+
+            $this->assertSuccessStatus($response, 'Anthropic');
 
             $rawBody = (string) $response->getBody();
             $body = json_decode($rawBody, true);
@@ -234,9 +276,79 @@ class LlmService implements LlmServiceInterface
 
             return $message;
 
-        } catch (GuzzleException $e) {
+        } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("Anthropic API Error: " . $e->getMessage(), 0, $e);
         }
+    }
+
+    /**
+     * Guard shared by {@see callOpenAi()} and {@see callAnthropic()} against a PSR-18 gap the
+     * Guzzle `->post()` call this replaced didn't have: `ClientInterface::sendRequest()` never
+     * throws on a 4xx/5xx status — Guzzle's own PSR-18 adapter hardcodes `http_errors => false`
+     * for that method — so an HTTP error comes back as an ordinary `ResponseInterface` instead
+     * of a `ClientExceptionInterface`. Left unchecked, callers silently got a malformed/empty
+     * completion instead of a failure. Mirrors the status check in the sibling transport
+     * {@see \Milpa\McpClient\Transports\HttpSseTransport::request()}, adapted to preserve the
+     * `"$provider API Error: ..."` message contract this class's callers depend on (see
+     * `callOpenAi()`'s and `callAnthropic()`'s `ClientExceptionInterface` catches).
+     *
+     * @throws \RuntimeException when the response status is >= 400
+     */
+    private function assertSuccessStatus(ResponseInterface $response, string $provider): void
+    {
+        $statusCode = $response->getStatusCode();
+        if ($statusCode < 400) {
+            return;
+        }
+
+        $reason = trim($response->getReasonPhrase());
+        $status = $reason !== '' ? "{$statusCode} {$reason}" : (string) $statusCode;
+
+        throw new \RuntimeException(sprintf(
+            '%s API Error: HTTP %s - %s',
+            $provider,
+            $status,
+            $this->truncateErrorBody((string) $response->getBody())
+        ));
+    }
+
+    /**
+     * Bound an HTTP error body to {@see MAX_ERROR_BODY_LENGTH} characters for inclusion in an
+     * exception message — enough to diagnose the failure without dumping a potentially large
+     * (or, per `SECURITY.md`, sensitive) response body wholesale into whatever catches and logs
+     * the exception.
+     */
+    private function truncateErrorBody(string $body): string
+    {
+        $body = trim($body);
+        if ($body === '') {
+            return '(empty response body)';
+        }
+
+        if (mb_strlen($body) > self::MAX_ERROR_BODY_LENGTH) {
+            return mb_substr($body, 0, self::MAX_ERROR_BODY_LENGTH) . '... (truncated)';
+        }
+
+        return $body;
+    }
+
+    /**
+     * Build a PSR-7 JSON POST request shared by {@see callOpenAi()} and {@see callAnthropic()}.
+     *
+     * @param array<string, string> $headers
+     * @param array<string, mixed>  $payload
+     */
+    private function buildJsonRequest(string $uri, array $headers, array $payload): RequestInterface
+    {
+        $request = $this->requestFactory
+            ->createRequest('POST', $uri)
+            ->withBody($this->streamFactory->createStream((string) json_encode($payload)));
+
+        foreach ($headers as $name => $value) {
+            $request = $request->withHeader($name, $value);
+        }
+
+        return $request;
     }
 
     /**

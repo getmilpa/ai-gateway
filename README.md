@@ -57,6 +57,8 @@ $registry->register(
 
 $mcpClient = new McpClientService($registry);
 $llm = new LlmService(apiKey: getenv('OPENAI_API_KEY'), model: 'gpt-4o', provider: 'openai');
+// LlmService talks HTTP through PSR-18 (Psr\Http\Client\ClientInterface), defaulting to a
+// Guzzle client when none is injected — see "Bringing your own HTTP client" below.
 
 $orchestrator = new AgentOrchestrator($llm, $mcpClient);
 
@@ -105,6 +107,34 @@ translates both directions for Anthropic:
   flattened back into a single OpenAI-shaped assistant message (`content` + `tool_calls`), so
   `AgentOrchestrator` runs identical logic regardless of provider.
 
+### Bringing your own HTTP client (PSR-18)
+
+`LlmService`'s constructor accepts a PSR-18 `ClientInterface` (plus PSR-17 request/stream
+factories) — inject your own for connection pooling, retry/circuit-breaker middleware, or
+tests that assert on the outgoing request without touching the network:
+
+```php
+use Milpa\AiGateway\LlmService;
+
+$llm = new LlmService(
+    apiKey: getenv('ANTHROPIC_API_KEY'),
+    model: 'claude-3-5-sonnet-20241022',
+    provider: 'anthropic',
+    logger: $logger,               // Psr\Log\LoggerInterface; optional
+    httpClient: $yourPsr18Client,  // Psr\Http\Client\ClientInterface; omit for Guzzle
+    requestFactory: $yourFactory,  // Psr\Http\Message\RequestFactoryInterface; optional
+    streamFactory: $yourFactory,   // Psr\Http\Message\StreamFactoryInterface; optional
+);
+```
+
+When `httpClient` is omitted, `LlmService` builds a Guzzle client with a **600s timeout**
+shared by both providers. That number used to be OpenAI-only-60s / Anthropic-only-600s (a
+per-request Guzzle option on the Anthropic call, since Claude tool-use responses can run
+long) — PSR-18's `sendRequest()` takes only a `RequestInterface`, with no per-call options
+bag, so a per-provider timeout has no seam to hang off anymore. The default now simply
+covers the slower case for both. Inject your own `ClientInterface` if you need the tighter
+OpenAI-side timeout back.
+
 ## What lives where
 
 | Layer | Package | Owns |
@@ -119,7 +149,11 @@ translates both directions for Anthropic:
 - PHP **≥ 8.3**
 - [`milpa/core`](https://packagist.org/packages/milpa/core) **^0.3**
 - [`milpa/tool-runtime`](https://packagist.org/packages/milpa/tool-runtime) **^0.2**
-- [`guzzlehttp/guzzle`](https://packagist.org/packages/guzzlehttp/guzzle) **^7.10**
+- [`guzzlehttp/guzzle`](https://packagist.org/packages/guzzlehttp/guzzle) **^7.10** — the
+  default PSR-18 implementation `LlmService` falls back to when no `ClientInterface` is
+  injected (also brings `guzzlehttp/psr7`, used as the default PSR-17 factory)
+- `psr/http-client`, `psr/http-factory`, `psr/http-message` — the interfaces `LlmService`'s
+  constructor is typed against
 - [`psr/log`](https://packagist.org/packages/psr/log) **^3**
 
 ## Security note
