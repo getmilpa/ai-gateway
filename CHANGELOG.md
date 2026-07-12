@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/getmilpa/ai-gateway/compare/v0.2.1...v0.2.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* receive milpa/core 0.6 — pin bump ([ae85dc9](https://github.com/getmilpa/ai-gateway/commit/ae85dc912f84a44361302c4197c58a34dc5d50d9))
+
 ## [0.2.1](https://github.com/getmilpa/ai-gateway/compare/v0.2.0...v0.2.1) (2026-07-08)
 
 
