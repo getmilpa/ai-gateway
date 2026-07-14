@@ -3,6 +3,12 @@
   "description": "Dual-provider LLM gateway for the Milpa PHP framework: OpenAI + Anthropic chat-completions client with tool-call format translation, an agentic tool-use loop, and a ToolRegistry facade for LLM/MCP exposure.",
   "type": "library",
   "license": "Apache-2.0",
+  "authors": [
+    {
+      "name": "Rodrigo Vicente - TeamX Agency",
+      "homepage": "https://teamx.agency"
+    }
+  ],
   "require": {
     "php": ">=8.3",
     "milpa/core": "^0.6",

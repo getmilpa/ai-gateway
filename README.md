@@ -139,7 +139,7 @@ OpenAI-side timeout back.
 
 | Layer | Package | Owns |
 |-------|---------|------|
-| Contracts | `milpa/core` | `LlmServiceInterface` — the seam `LlmService` implements. |
+| Contracts | `milpa/tool-runtime` | `LlmServiceInterface` — the seam `LlmService` implements. |
 | Tool execution | `milpa/tool-runtime` | `ToolRegistry`, `ToolContext`, `ToolResult`, channel rendering — the pipeline `McpClientService` and `AgentOrchestrator` drive. |
 | **Gateway** | **`milpa/ai-gateway`** (this package) | The concrete `LlmService` (OpenAI + Anthropic, format translation both ways), `McpClientService` (registry facade), and `AgentOrchestrator` (the ask-act loop). |
 | Your app | your host / plugins | API keys and secrets management, the PSR-3 logger you wire in, and any channel-specific glue (Telegram, web chat, CLI) around `AgentOrchestrator::run()`. |
@@ -147,8 +147,8 @@ OpenAI-side timeout back.
 ## Requirements
 
 - PHP **≥ 8.3**
-- [`milpa/core`](https://packagist.org/packages/milpa/core) **^0.3**
-- [`milpa/tool-runtime`](https://packagist.org/packages/milpa/tool-runtime) **^0.2**
+- [`milpa/core`](https://packagist.org/packages/milpa/core) **^0.6**
+- [`milpa/tool-runtime`](https://packagist.org/packages/milpa/tool-runtime) **^0.5**
 - [`guzzlehttp/guzzle`](https://packagist.org/packages/guzzlehttp/guzzle) **^7.10** — the
   default PSR-18 implementation `LlmService` falls back to when no `ClientInterface` is
   injected (also brings `guzzlehttp/psr7`, used as the default PSR-17 factory)
