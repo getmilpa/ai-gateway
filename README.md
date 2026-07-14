@@ -175,8 +175,8 @@ issues via [SECURITY.md](SECURITY.md), and note that this project follows a
 
 ## License
 
-[Apache-2.0](LICENSE) © TeamX Agency.
+[Apache-2.0](LICENSE) © Rodrigo Vicente - TeamX Agency.
 
 ---
 
-Milpa is designed, built, and maintained by **[TeamX Agency](https://teamx.agency/?utm_source=github&utm_medium=readme&utm_campaign=milpa&utm_content=ai-gateway)**.
+Milpa is designed, built, and maintained by **[Rodrigo Vicente - TeamX Agency](https://teamx.agency/?utm_source=github&utm_medium=readme&utm_campaign=milpa&utm_content=ai-gateway)**.

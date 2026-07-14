@@ -4,7 +4,7 @@
  * This file is part of milpa/ai-gateway — the dual-provider LLM client and agentic
  * tool-use runtime for the Milpa PHP framework.
  *
- * (c) TeamX Agency — https://teamx.agency <hola@teamx.agency>
+ * (c) Rodrigo Vicente - TeamX Agency — https://teamx.agency <hola@teamx.agency>
  *
  * @license Apache-2.0
  *
