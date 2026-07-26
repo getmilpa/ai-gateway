@@ -1,0 +1,7 @@
+milpa/ai-gateway — Dual-provider LLM gateway for the Milpa PHP framework: OpenAI + Anthropic chat-completions client with tool-call format translation, an agentic tool-use loop, and a ToolRegistry facade for LLM/MCP exposure.
+Copyright 2026 Rodrigo Vicente Gómez / TeamX Agency
+
+This product includes software developed by
+Rodrigo Vicente - TeamX Agency — https://x.com/rodrigoteamx
+
+https://teamx.agency · https://github.com/getmilpa/ai-gateway
