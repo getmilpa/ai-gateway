@@ -356,6 +356,178 @@ class LlmServiceTest extends TestCase
         );
     }
 
+
+    // ========== the OpenAI <-> Anthropic translation ==========
+    //
+    // Anthropic does not take the OpenAI message shape: system prompts move out
+    // of the message list, tool results become a user message carrying a
+    // tool_result block, and an assistant's tool_calls become tool_use blocks.
+    // None of that translation had ever been executed by a test, and it is the
+    // part that silently corrupts a conversation when it is wrong.
+
+    /** @return array<string, mixed> */
+    private function anthropicPayloadFor(array $messages, array $tools = []): array
+    {
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [['type' => 'text', 'text' => 'ok']],
+        ])));
+        $service = new LlmService('api-key', 'claude-sonnet-5', 'anthropic', null, $fake);
+
+        $service->generateResponse('', $tools, $messages);
+
+        self::assertNotNull($fake->lastRequest);
+
+        return (array) json_decode((string) $fake->lastRequest->getBody(), true);
+    }
+
+    public function testASystemMessageMovesOutOfTheMessageListIntoTheSystemField(): void
+    {
+        $payload = $this->anthropicPayloadFor([
+            ['role' => 'system', 'content' => 'Eres un asistente breve.'],
+            ['role' => 'user', 'content' => 'hola'],
+        ]);
+
+        self::assertSame('Eres un asistente breve.', $payload['system']);
+        self::assertCount(1, $payload['messages'], 'The system message is no longer one of them.');
+        self::assertSame('user', $payload['messages'][0]['role']);
+    }
+
+    public function testAToolResultBecomesAUserMessageCarryingAToolResultBlock(): void
+    {
+        $payload = $this->anthropicPayloadFor([
+            ['role' => 'user', 'content' => '¿qué clima hace?'],
+            ['role' => 'tool', 'tool_call_id' => 'call_1', 'content' => '{"temp":21}'],
+        ]);
+
+        $block = $payload['messages'][1]['content'][0];
+
+        self::assertSame('user', $payload['messages'][1]['role'], 'Anthropic has no tool role.');
+        self::assertSame('tool_result', $block['type']);
+        self::assertSame('call_1', $block['tool_use_id']);
+        self::assertSame('{"temp":21}', $block['content']);
+    }
+
+    public function testAToolResultWithNoIdIsStillSentRatherThanDropped(): void
+    {
+        $payload = $this->anthropicPayloadFor([
+            ['role' => 'tool', 'content' => 'algo'],
+        ]);
+
+        self::assertSame('unknown', $payload['messages'][0]['content'][0]['tool_use_id']);
+    }
+
+    public function testAnAssistantsToolCallsBecomeToolUseBlocksAlongsideItsText(): void
+    {
+        $payload = $this->anthropicPayloadFor([
+            ['role' => 'user', 'content' => 'busca'],
+            ['role' => 'assistant', 'content' => 'Voy a buscar.', 'tool_calls' => [
+                ['id' => 'call_1', 'type' => 'function', 'function' => ['name' => 'search', 'arguments' => '{"q":"milpa"}']],
+            ]],
+        ]);
+
+        $content = $payload['messages'][1]['content'];
+
+        self::assertSame(['type' => 'text', 'text' => 'Voy a buscar.'], $content[0]);
+        self::assertSame('tool_use', $content[1]['type']);
+        self::assertSame('call_1', $content[1]['id']);
+        self::assertSame('search', $content[1]['name']);
+        self::assertSame(['q' => 'milpa'], $content[1]['input']);
+    }
+
+    public function testAToolCallWithNoArgumentsIsSentAsAnObjectNotAnEmptyArray(): void
+    {
+        // PHP's empty array encodes as `[]`; Anthropic requires `{}` for an
+        // input with no fields and rejects the list. This is the one place the
+        // difference between the two is visible.
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [['type' => 'text', 'text' => 'ok']],
+        ])));
+        $service = new LlmService('api-key', 'claude-sonnet-5', 'anthropic', null, $fake);
+
+        $service->generateResponse('', [], [
+            ['role' => 'assistant', 'content' => '', 'tool_calls' => [
+                ['id' => 'call_1', 'type' => 'function', 'function' => ['name' => 'ping', 'arguments' => '{}']],
+            ]],
+        ]);
+
+        self::assertNotNull($fake->lastRequest);
+        self::assertStringContainsString('"input":{}', (string) $fake->lastRequest->getBody());
+    }
+
+    public function testToolsAreTranslatedIntoTheAnthropicShape(): void
+    {
+        $payload = $this->anthropicPayloadFor(
+            [['role' => 'user', 'content' => 'hola']],
+            [['name' => 'search', 'description' => 'Busca', 'inputSchema' => ['type' => 'object']]],
+        );
+
+        self::assertSame('search', $payload['tools'][0]['name']);
+    }
+
+    public function testAnAnthropicToolUseComesBackAsAnOpenAiToolCall(): void
+    {
+        // The other direction: the orchestrator only speaks the OpenAI shape,
+        // so a tool_use block has to arrive as tool_calls or the loop stalls.
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [
+                ['type' => 'text', 'text' => 'Buscando… '],
+                ['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'search', 'input' => ['q' => 'milpa']],
+            ],
+        ])));
+        $service = new LlmService('api-key', 'claude-sonnet-5', 'anthropic', null, $fake);
+
+        $message = $service->generateResponse('busca milpa');
+
+        self::assertSame('assistant', $message['role']);
+        self::assertSame('Buscando… ', $message['content']);
+        self::assertSame('toolu_1', $message['tool_calls'][0]['id']);
+        self::assertSame('function', $message['tool_calls'][0]['type']);
+        self::assertSame('search', $message['tool_calls'][0]['function']['name']);
+        self::assertSame('{"q":"milpa"}', $message['tool_calls'][0]['function']['arguments']);
+    }
+
+    public function testAnAnthropicAnswerWithNoToolUseCarriesNoToolCallsKey(): void
+    {
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [['type' => 'text', 'text' => 'Sin herramientas.']],
+        ])));
+        $service = new LlmService('api-key', 'claude-sonnet-5', 'anthropic', null, $fake);
+
+        $message = $service->generateResponse('hola');
+
+        self::assertArrayNotHasKey('tool_calls', $message);
+    }
+
+    public function testOpenAiRequestsWithToolsAskForAutomaticToolChoice(): void
+    {
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'choices' => [['message' => ['role' => 'assistant', 'content' => 'ok']]],
+        ])));
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', null, $fake);
+
+        $service->generateResponse('hola', [['name' => 'search', 'description' => 'Busca', 'inputSchema' => ['type' => 'object']]]);
+
+        self::assertNotNull($fake->lastRequest);
+        $payload = (array) json_decode((string) $fake->lastRequest->getBody(), true);
+
+        self::assertSame('auto', $payload['tool_choice']);
+        self::assertSame('search', $payload['tools'][0]['function']['name']);
+    }
+
+
+    public function testAnErrorWithAnEmptyBodySaysSoInsteadOfQuotingNothing(): void
+    {
+        // A 500 with no body is the case where "API Error: " and nothing else
+        // would be the whole message. It has to name what it saw.
+        $fake = new FakeHttpClient(new Response(500, [], ''));
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', null, $fake);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('(empty response body)');
+
+        $service->generateResponse('hola');
+    }
+
     // ========== PSR-18 seam: fake ClientInterface, no network ==========
     //
     // Before the seam, LlmService built its Guzzle client internally — generateResponse()'s

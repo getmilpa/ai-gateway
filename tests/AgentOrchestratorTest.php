@@ -519,4 +519,43 @@ class AgentOrchestratorTest extends TestCase
         $this->assertStringContainsString('CONFIRMAR', $result);
         $this->assertStringContainsString('CANCELAR', $result);
     }
+
+    // ---- /force and the step callback ----------------------------------------
+
+    public function testForceStripsThePrefixClearsHistoryAndTellsTheModelToUseTools(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $capturado = null;
+        $this->llmService->method('generateResponse')
+            ->willReturnCallback(function (string $prompt, array $tools, array $messages) use (&$capturado): array {
+                $capturado = $messages;
+
+                return ['role' => 'assistant', 'content' => 'listo'];
+            });
+
+        $this->orchestrator->run('/force dame el estado', 'Eres útil.', [
+            ['role' => 'user', 'content' => 'algo viejo'],
+        ]);
+
+        self::assertNotNull($capturado);
+        self::assertCount(2, $capturado, 'History was cleared: only the system prompt and the user turn remain.');
+        self::assertStringContainsString('You must use tools', $capturado[0]['content']);
+        self::assertSame('dame el estado', $capturado[1]['content'], 'The /force prefix is not part of the question.');
+    }
+
+    public function testAStepCallbackThatThrowsDoesNotTakeTheRunDownWithIt(): void
+    {
+        // The callback exists to refresh a typing indicator. A transport hiccup
+        // there must not cost the user their answer.
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+        $this->llmService->method('generateResponse')
+            ->willReturn(['role' => 'assistant', 'content' => 'la respuesta']);
+
+        $result = $this->orchestrator->run('hola', 'Eres útil.', [], static function (): void {
+            throw new \RuntimeException('el indicador se cayó');
+        });
+
+        self::assertSame('la respuesta', $result);
+    }
 }
