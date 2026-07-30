@@ -1,6 +1,16 @@
 {
   "name": "milpa/ai-gateway",
   "description": "Dual-provider LLM gateway for the Milpa PHP framework: OpenAI + Anthropic chat-completions client with tool-call format translation, an agentic tool-use loop, and a ToolRegistry facade for LLM/MCP exposure.",
+  "keywords": [
+    "php",
+    "milpa",
+    "framework",
+    "llm",
+    "openai",
+    "anthropic",
+    "tool-calling",
+    "ai"
+  ],
   "type": "library",
   "license": "Apache-2.0",
   "authors": [
@@ -12,7 +22,7 @@
   "require": {
     "php": ">=8.3",
     "milpa/core": "^0.6",
-    "milpa/tool-runtime": "^0.5",
+    "milpa/tool-runtime": "^0.8",
     "guzzlehttp/guzzle": "^7.10",
     "guzzlehttp/psr7": "^2.7",
     "psr/http-client": "^1.0",
