@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/getmilpa/ai-gateway/compare/v0.2.2...v0.2.3) (2026-07-30)
+
+
+### Bug Fixes
+
+* catch up with the family's published versions ([684fa53](https://github.com/getmilpa/ai-gateway/commit/684fa53e4e2cf0f3d92be02b6c9e2d8235f8691b))
+
 ## [0.2.2](https://github.com/getmilpa/ai-gateway/compare/v0.2.1...v0.2.2) (2026-07-12)
 
 
