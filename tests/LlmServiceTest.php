@@ -718,6 +718,86 @@ class LlmServiceTest extends TestCase
             $this->assertStringContainsString('truncated', $e->getMessage());
         }
     }
+
+    /**
+     * Un endpoint propio reemplaza al del proveedor, y los encabezados del host ganan.
+     *
+     * Existe por dos razones que se parecen poco: probar el bucle del agente sin gastarle tokens a un
+     * proveedor público, y correrlo con datos que no pueden salir de la casa. Un Ollama en la LAN
+     * detrás de auth básica no acepta el Bearer del proveedor — por eso los encabezados del host se
+     * aplican después, para que un `Authorization` explícito gane.
+     */
+    public function testACustomBaseUrlAndHeadersReachTheRequest(): void
+    {
+        $vistas = [];
+        $cliente = new class ($vistas) implements ClientInterface {
+            /** @param list<\Psr\Http\Message\RequestInterface> $vistas */
+            public function __construct(private array &$vistas)
+            {
+            }
+
+            public function sendRequest(\Psr\Http\Message\RequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                $this->vistas[] = $request;
+
+                return new \GuzzleHttp\Psr7\Response(200, [], (string) json_encode([
+                    'choices' => [['message' => ['role' => 'assistant', 'content' => 'hola']]],
+                ]));
+            }
+        };
+
+        $service = new LlmService(
+            'la-llave',
+            'qwen3-coder:30b',
+            'openai',
+            null,
+            $cliente,
+            null,
+            null,
+            baseUrl: 'https://llama.local/',
+            extraHeaders: ['Authorization' => 'Basic ' . base64_encode('llama:llam4')],
+        );
+
+        $service->generateResponse('hola');
+
+        self::assertCount(1, $vistas);
+        self::assertSame(
+            'https://llama.local/v1/chat/completions',
+            (string) $vistas[0]->getUri(),
+            'la barra final del baseUrl no puede duplicarse',
+        );
+        self::assertSame(
+            'Basic ' . base64_encode('llama:llam4'),
+            $vistas[0]->getHeaderLine('Authorization'),
+            'el encabezado del host reemplaza al Bearer del proveedor',
+        );
+    }
+
+    /** Sin baseUrl, el endpoint sigue siendo el del proveedor — nada cambia para quien no lo usa. */
+    public function testWithoutABaseUrlItStillGoesToTheProvider(): void
+    {
+        $vistas = [];
+        $cliente = new class ($vistas) implements ClientInterface {
+            /** @param list<\Psr\Http\Message\RequestInterface> $vistas */
+            public function __construct(private array &$vistas)
+            {
+            }
+
+            public function sendRequest(\Psr\Http\Message\RequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                $this->vistas[] = $request;
+
+                return new \GuzzleHttp\Psr7\Response(200, [], (string) json_encode([
+                    'choices' => [['message' => ['role' => 'assistant', 'content' => 'hola']]],
+                ]));
+            }
+        };
+
+        (new LlmService('la-llave', 'gpt-4o', 'openai', null, $cliente))->generateResponse('hola');
+
+        self::assertSame('https://api.openai.com/v1/chat/completions', (string) $vistas[0]->getUri());
+        self::assertSame('Bearer la-llave', $vistas[0]->getHeaderLine('Authorization'));
+    }
 }
 
 /**

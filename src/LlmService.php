@@ -60,8 +60,25 @@ class LlmService implements LlmServiceInterface
     private string $apiKey;
     private string $model;
     private string $provider;
+    private ?string $baseUrl;
+
+    /** @var array<string,string> */
+    private array $extraHeaders;
     private ?LoggerInterface $logger;
 
+    /**
+     * @param string|null          $baseUrl      Dónde vive el modelo. `null` es el proveedor público —
+     *                                           `api.openai.com` o `api.anthropic.com`— y cualquier otra cosa
+     *                                           es un endpoint compatible: un Ollama en la LAN, un vLLM, un
+     *                                           proxy corporativo. Sin esto, la única forma de probar el bucle
+     *                                           del agente era gastarle tokens a un proveedor público, y la
+     *                                           única forma de correrlo con datos que no pueden salir de la
+     *                                           casa era no correrlo.
+     * @param array<string,string> $extraHeaders Encabezados adicionales para cada llamada — un `Authorization:
+     *                                           Basic …` cuando el endpoint local está detrás de auth básica,
+     *                                           por ejemplo. Se aplican DESPUÉS de los propios, así que pueden
+     *                                           reemplazar el `Authorization` del proveedor a propósito.
+     */
     public function __construct(
         string $apiKey,
         string $model = 'gpt-4o',
@@ -70,10 +87,14 @@ class LlmService implements LlmServiceInterface
         ?ClientInterface $httpClient = null,
         ?RequestFactoryInterface $requestFactory = null,
         ?StreamFactoryInterface $streamFactory = null,
+        ?string $baseUrl = null,
+        array $extraHeaders = [],
     ) {
         $this->apiKey = $apiKey;
         $this->model = $model;
         $this->provider = strtolower($provider);
+        $this->baseUrl = $baseUrl === null ? null : rtrim($baseUrl, '/');
+        $this->extraHeaders = $extraHeaders;
         $this->logger = $logger;
         $this->httpClient = $httpClient ?? new Client([
             'timeout' => self::DEFAULT_TIMEOUT_SECONDS,
@@ -137,7 +158,7 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $request = $this->buildJsonRequest('https://api.openai.com/v1/chat/completions', [
+            $request = $this->buildJsonRequest($this->uri('https://api.openai.com', '/v1/chat/completions'), [
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
             ], $payload);
@@ -226,7 +247,7 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $request = $this->buildJsonRequest('https://api.anthropic.com/v1/messages', [
+            $request = $this->buildJsonRequest($this->uri('https://api.anthropic.com', '/v1/messages'), [
                 'x-api-key' => $this->apiKey,
                 'anthropic-version' => '2023-06-01',
                 'content-type' => 'application/json',
@@ -338,13 +359,26 @@ class LlmService implements LlmServiceInterface
      * @param array<string, string> $headers
      * @param array<string, mixed>  $payload
      */
+    /** El endpoint: el del proveedor, o el que el host haya dicho. */
+    private function uri(string $porDefecto, string $ruta): string
+    {
+        return ($this->baseUrl ?? $porDefecto) . $ruta;
+    }
+
+    /**
+     * @param array<string,string> $headers
+     * @param array<string,mixed>  $payload
+     */
     private function buildJsonRequest(string $uri, array $headers, array $payload): RequestInterface
     {
         $request = $this->requestFactory
             ->createRequest('POST', $uri)
             ->withBody($this->streamFactory->createStream((string) json_encode($payload)));
 
-        foreach ($headers as $name => $value) {
+        // Los propios primero y los del host después, para que un `Authorization` explícito gane: un
+        // endpoint local detrás de auth básica no acepta el Bearer del proveedor, y quien lo cableó
+        // sabe cuál de los dos vale.
+        foreach ([...$headers, ...$this->extraHeaders] as $name => $value) {
             $request = $request->withHeader($name, $value);
         }
 
