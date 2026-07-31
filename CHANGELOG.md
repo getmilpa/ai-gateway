@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/getmilpa/ai-gateway/compare/v0.3.0...v0.3.1) (2026-07-31)
+
+
+### Features
+
+* point the agent at your own endpoint ([719fce1](https://github.com/getmilpa/ai-gateway/commit/719fce19aa2eee429168c2cb91439ba8670ecbee))
+
 ## [0.3.0](https://github.com/getmilpa/ai-gateway/compare/v0.2.3...v0.3.0) (2026-07-30)
 
 
