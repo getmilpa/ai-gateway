@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/getmilpa/ai-gateway/compare/v0.3.1...v0.4.0) (2026-08-01)
+
+
+### Features
+
+* ToolCallGate — alguien puede decidir ANTES de que el bucle actue ([74ff5b4](https://github.com/getmilpa/ai-gateway/commit/74ff5b463dcda5a42bbd23c1264992549116dc35))
+
 ## [0.3.1](https://github.com/getmilpa/ai-gateway/compare/v0.3.0...v0.3.1) (2026-07-31)
 
 
