@@ -21,7 +21,7 @@
   ],
   "require": {
     "php": ">=8.3",
-    "milpa/core": "^0.6",
+    "milpa/core": "^0.6.2 || ^0.7",
     "milpa/tool-runtime": "^0.9",
     "guzzlehttp/guzzle": "^7.10",
     "guzzlehttp/psr7": "^2.7",
@@ -45,6 +45,21 @@
     "psr-4": {
       "Milpa\\AiGateway\\Tests\\": "tests/",
       "Milpa\\Docs\\": "vendor/milpa/core/tools/gen-docs/"
+    }
+  },
+  "extra": {
+    "milpa": {
+      "capability": {
+        "id": "agent-runs",
+        "title": "Un modelo al otro lado: el orquestador que convierte una petici\u00f3n en pasos",
+        "unlocks": [
+          "coa agent \"\u2026\""
+        ],
+        "provides": [
+          "agent.model"
+        ],
+        "briefing": "Esta app puede correr al agente contra un modelo configurado."
+      }
     }
   }
 }
