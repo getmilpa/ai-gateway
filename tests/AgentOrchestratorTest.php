@@ -18,6 +18,7 @@ namespace Milpa\AiGateway\Tests;
 use PHPUnit\Framework\TestCase;
 use Milpa\AiGateway\AgentOrchestrator;
 use Milpa\AiGateway\LlmService;
+use Milpa\AiGateway\ToolCallRefusedException;
 use Milpa\AiGateway\McpClientService;
 use Milpa\ToolRuntime\Contracts\ToolContext;
 use Psr\Log\LoggerInterface;
@@ -557,5 +558,70 @@ class AgentOrchestratorTest extends TestCase
         });
 
         self::assertSame('la respuesta', $result);
+    }
+
+    /**
+     * UNA NEGATIVA TERMINA LA VUELTA — el modelo no vuelve a ser consultado.
+     *
+     * Es la diferencia entre una compuerta y una sugerencia. Si la negativa cayera en el catch
+     * genérico, el modelo la leería como el resultado de una herramienta y probaría otra cosa:
+     * seguiría trabajando ALREDEDOR de la compuerta, y el humano al que se le iba a preguntar se
+     * enteraría cuando ya se hizo algo distinto. Esta prueba es lo que hace que mover ese catch deje
+     * de ser un cambio inocente.
+     */
+    public function testARefusedToolCallEndsTheRunInsteadOfFeedingItBackToTheModel(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'make', 'description' => 'Andamia', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')
+            ->willThrowException(new ToolCallRefusedException('«make» necesita permiso en esta sesión'));
+
+        // UNA sola vez: si el bucle continuara, habría una segunda.
+        $this->llmService->expects($this->once())
+            ->method('generateResponse')
+            ->willReturn([
+                'role' => 'assistant',
+                'content' => '',
+                'tool_calls' => [
+                    ['id' => 'c1', 'function' => ['name' => 'make', 'arguments' => '{}']],
+                ],
+            ]);
+
+        $respuesta = $this->orchestrator->run('crea una entity');
+
+        $this->assertStringContainsString('necesita permiso', $respuesta, 'el motivo llega a quien preguntó');
+    }
+
+    /**
+     * Un fallo NORMAL de herramienta sí vuelve al modelo, y el bucle sigue.
+     *
+     * Es la otra mitad del contrato: una herramienta que truena por un argumento malo es algo que el
+     * modelo puede corregir, y devolvérselo es lo que le permite hacerlo. Sin esta prueba, «detener
+     * ante una negativa» podría implementarse deteniéndose ante todo.
+     */
+    public function testAnOrdinaryToolFailureStillGoesBackToTheModel(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'make', 'description' => 'Andamia', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willThrowException(new \Exception('campo desconocido'));
+
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(
+                [
+                    'role' => 'assistant',
+                    'content' => '',
+                    'tool_calls' => [
+                        ['id' => 'c1', 'function' => ['name' => 'make', 'arguments' => '{}']],
+                    ],
+                ],
+                ['role' => 'assistant', 'content' => 'corrijo el campo'],
+            );
+
+        $respuesta = $this->orchestrator->run('crea una entity');
+
+        $this->assertStringContainsString('corrijo el campo', $respuesta);
     }
 }

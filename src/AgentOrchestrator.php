@@ -233,7 +233,21 @@ class AgentOrchestrator
 
                         // Store tool result for appending to final response
                         $toolResults[] = $output;
+                    } catch (ToolCallRefusedException $e) {
+                        // UNA NEGATIVA TERMINA LA VUELTA — no se le devuelve al modelo.
+                        //
+                        // Si cayera en el catch de abajo, el modelo leería «no puedes hacer eso» como
+                        // el resultado de una herramienta y probaría otra cosa: seguiría trabajando
+                        // alrededor de la compuerta en vez de detenerse ante ella. Una compuerta que se
+                        // puede rodear intentando por otro lado no es una compuerta, y el humano al que
+                        // se le iba a preguntar se enteraría cuando ya se hizo algo distinto.
+                        $this->log("Step $i: 🚧 TOOL REFUSED '$functionName': " . $e->getMessage());
+
+                        return $e->getMessage();
                     } catch (\Exception $e) {
+                        // Cualquier OTRO fallo sí vuelve al modelo: una herramienta que truena por un
+                        // argumento malo es algo que el modelo puede corregir, y devolvérselo es lo que
+                        // le permite hacerlo.
                         $output = "Error executing tool: " . $e->getMessage();
                         $this->log("Step $i: ❌ TOOL ERROR '$functionName': " . $e->getMessage());
                     }

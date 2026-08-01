@@ -92,6 +92,34 @@ If a tool result requires confirmation or is blocked by policy, the loop stops i
 returns that outcome instead of continuing — the caller (a chat handler, a CLI, a bot) is
 responsible for the confirm/cancel round trip on the next user turn.
 
+## Stopping the loop before it acts: `ToolCallGate`
+
+The loop above executes what the model asked for. `ToolCallGate` is the seam that lets somebody
+decide **before** it does:
+
+```php
+interface ToolCallGate
+{
+    // The reason this call does not proceed, or null if it does.
+    public function refuse(string $tool, array $arguments): ?string;
+    public function record(string $tool, array $arguments, array $result): void;
+}
+```
+
+`refuse()` runs before the call and `record()` after it. The two halves are not symmetric on
+purpose: the gate sees the **intention**, and the record sees the **outcome**, and resuming a long
+session needs both — with only the intention, an agent picking up where it left off knows what its
+past self was going to try but not whether it worked, so it repeats work already done or work that
+already failed.
+
+The gate is an interface here and nothing else: this package brings no policy of its own. Who may
+run what, and whether a human is asked first, belongs to whoever holds the session — `milpa/agent`
+implements exactly this seam with `SessionPolicy`, per-session permissions and human questions that
+survive the process.
+
+A gate that refuses returns the reason as a string, not a boolean. Whoever receives the refusal
+needs to know *why* in order to do something about it, and that information was already there.
+
 ## Provider translation
 
 `LlmService` speaks one shape to its callers — OpenAI's `messages` / `tool_calls` — and
