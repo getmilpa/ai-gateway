@@ -51,14 +51,14 @@
     "milpa": {
       "capability": {
         "id": "agent-runs",
-        "title": "Un modelo al otro lado: el orquestador que convierte una petici\u00f3n en pasos",
+        "title": "A model on the other side: the orchestrator that turns a request into steps",
         "unlocks": [
           "coa agent \"\u2026\""
         ],
         "provides": [
           "agent.model"
         ],
-        "briefing": "Esta app puede correr al agente contra un modelo configurado."
+        "briefing": "This app can run the agent against a configured model."
       }
     }
   }
