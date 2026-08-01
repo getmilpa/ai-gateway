@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/getmilpa/ai-gateway/compare/v0.4.1...v0.4.2) (2026-08-01)
+
+
+### Bug Fixes
+
+* the capability contract speaks English ([d0fcbf2](https://github.com/getmilpa/ai-gateway/commit/d0fcbf270be64f60cb33e2f20675c2cfaef003d6))
+
 ## [0.4.1](https://github.com/getmilpa/ai-gateway/compare/v0.4.0...v0.4.1) (2026-08-01)
 
 
