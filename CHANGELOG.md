@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/getmilpa/ai-gateway/compare/v0.4.0...v0.4.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* este paquete declara que aporta ([d827d06](https://github.com/getmilpa/ai-gateway/commit/d827d0668bb4a51bf85b140ddd3f09dacd94c0fb))
+
 ## [0.4.0](https://github.com/getmilpa/ai-gateway/compare/v0.3.1...v0.4.0) (2026-08-01)
 
 
