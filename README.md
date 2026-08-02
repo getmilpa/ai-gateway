@@ -120,6 +120,32 @@ survive the process.
 A gate that refuses returns the reason as a string, not a boolean. Whoever receives the refusal
 needs to know *why* in order to do something about it, and that information was already there.
 
+## The table: `OptionTable`
+
+Since 0.5 the loop can operate against a **table** — the set of options the agent currently has in
+front of it — through one port with two questions that look alike and are not:
+
+```php
+interface OptionTable
+{
+    public function remove(string $option, string $code, ?string $message = null): void;
+    public function removed(): array;          // the PROJECTION: what the model sees
+    public function wasRemoved(string $option): bool;  // the FACT: did an authority declare it gone?
+}
+```
+
+The catalogue the model sees is re-derived **every step** from the registry minus `removed()` — it
+is a projection, never a snapshot. And a refusal that *removed* the option no longer ends the run:
+there is nothing left to route around, so the reason goes back to the model and the loop continues
+with a different table. Both came out of measurement: a frozen catalogue made "did the agent re-read
+the world?" unanswerable, and a run-ending refusal turned every denial into a shutdown (0 of 32
+runs recovered).
+
+`SecondOpinionGate` also stopped being quiet anywhere: an empty answer, a verdict-less answer and a
+failed judge each say so with their own cause, a denial leaves a witness on stderr **outside** the
+stream it writes to, and an ALLOW logs nothing — approving silently is correct; failing silently
+was being counted as approval.
+
 ## Provider translation
 
 `LlmService` speaks one shape to its callers — OpenAI's `messages` / `tool_calls` — and

@@ -52,13 +52,16 @@ use Psr\Log\NullLogger;
 final readonly class SecondOpinionGate implements ToolCallGate
 {
     /**
-     * @param ToolCallGate $piso  la compuerta sintáctica; decide PRIMERO y su `no` es definitivo
-     * @param string       $tarea lo que el humano pidió, tal cual. Es contra esto que se juzga la
-     *                            llamada: sin la petición, «apagar un plugin» no es ni correcto ni
-     *                            incorrecto
-     * @param list<string> $jamas herramientas que este verificador mira con lupa. No es una lista de
-     *                            prohibidas —eso sería el piso otra vez— sino de las que ameritan
-     *                            preguntar si la tarea las pedía
+     * @param ToolCallGate     $piso  la compuerta sintáctica; decide PRIMERO y su `no` es definitivo
+     * @param string           $tarea lo que el humano pidió, tal cual. Es contra esto que se juzga la
+     *                                llamada: sin la petición, «apagar un plugin» no es ni correcto ni
+     *                                incorrecto
+     * @param list<string>     $jamas herramientas que este verificador mira con lupa. No es una lista de
+     *                                prohibidas —eso sería el piso otra vez— sino de las que ameritan
+     *                                preguntar si la tarea las pedía
+     * @param OptionTable|null $mesa  a quien se le avisa cuando ESTE juicio niega, para que la opción
+     *                                deje de estar enfrente. Sin mesa, la negativa es sólo un motivo —
+     *                                que es exactamente lo que Q-P19-D/E midieron insuficiente
      */
     public function __construct(
         private ToolCallGate $piso,
@@ -68,6 +71,7 @@ final readonly class SecondOpinionGate implements ToolCallGate
         /** @var array<string, string> */
         private array $alternativas = [],
         private LoggerInterface $logger = new NullLogger(),
+        private ?OptionTable $mesa = null,
     ) {
     }
 
@@ -83,6 +87,13 @@ final readonly class SecondOpinionGate implements ToolCallGate
     public function refuse(string $tool, array $arguments): ?string
     {
         // EL PISO PRIMERO. Su `no` no se apela.
+        //
+        // Y SU `no` NO RETIRA LA OPCIÓN, que es la distinción que decide todo este diseño: el piso
+        // niega con `AskPermission` o `RequireSignature`, y las dos son **una pausa**, no un
+        // imposible. Quien la recibe puede conceder el permiso o firmar, y entonces la opción tiene
+        // que seguir estando. Quitarla ahí convertiría «todavía no» en «nunca», y una sesión que
+        // vuelve con el permiso otorgado se encontraría la mesa sin la herramienta que le acaban de
+        // autorizar.
         $sintactico = $this->piso->refuse($tool, $arguments);
         if ($sintactico !== null) {
             return $sintactico;
@@ -98,14 +109,23 @@ final readonly class SecondOpinionGate implements ToolCallGate
         $veredicto = $this->juzgar($tool, $arguments);
 
         if ($veredicto === null) {
-            // No se pudo juzgar. Se deja pasar y se DICE: callarlo haría que un verificador caído se
-            // viera igual que uno que aprueba todo.
-            $this->logger->warning('el segundo juicio no pudo opinar; la llamada pasa con el piso solo', [
-                'tool' => $tool,
-            ]);
-
+            // `null` aquí es ALLOW **o** un juez que no pudo opinar — y los dos casos ya se
+            // distinguieron adentro de `juzgar()`, que dice cada fallo con su causa (excepción,
+            // respuesta vacía, sin veredicto) y calla en la aprobación. Un warning adicional aquí
+            // contaba las APROBACIONES como caídas: en la tanda de Q-P19-K produjo 61 líneas de
+            // «no pudo opinar» con cero fallos reales, y la métrica de juez-caído salió 16/16 hasta
+            // que se decodificó a mano. El que informa es quien sabe la causa, no quien ve el null.
             return null;
         }
+
+        // LA NEGATIVA DEJA DE SER UN MENSAJE Y PASA A SER UN HECHO. Éste es el único punto del
+        // sistema donde una opción sale de la mesa, y va aquí —no en el piso, no en quien llama—
+        // porque es aquí donde se decidió que la llamada iba MÁS ALLÁ de lo que se pidió, que es lo
+        // único que vuelve a una opción imposible en vez de pendiente.
+        //
+        // El código es estable y el mensaje no: quien lea este stream dentro de un año necesita poder
+        // contar cuántas se fueron por esto sin leer la frase de hoy.
+        $this->mesa?->remove($tool, 'beyond_request', $veredicto);
 
         return $veredicto;
     }
@@ -166,6 +186,13 @@ final readonly class SecondOpinionGate implements ToolCallGate
 
         $texto = trim(\is_string($r['content'] ?? null) ? $r['content'] : '');
         if ($texto === '') {
+            // También ESTO se dice. Esta vía devolvía `null` callada mientras el docblock de la clase
+            // prometía «no calla» — la encontró una revisión adversaria comparando la promesa contra
+            // el código, y una respuesta vacía es tan indistinguible de una aprobación como un timeout.
+            $this->logger->warning('el segundo juicio contestó vacío; la llamada pasa con el piso solo', [
+                'tool' => $tool,
+            ]);
+
             return null;
         }
 
@@ -173,6 +200,12 @@ final readonly class SecondOpinionGate implements ToolCallGate
         // párrafo sin decir ninguna de las dos palabras no emitió un juicio, y tratar su silencio como
         // aprobación sería inventarle una opinión.
         if (preg_match('/\bDENY\b\s*:?\s*(.*)/i', $texto, $m) === 1) {
+            // La negativa se dice TAMBIÉN aquí, no sólo en el stream de la sesión. Son dos canales a
+            // propósito: el hecho (`option_removed`) lo apenda quien tiene mesa, y esta línea existe
+            // para poder verificar que el hecho llegó — un falsificador «negó y el hecho no está»
+            // sólo es operacionalizable si la negativa tiene un testigo que no sea el propio stream.
+            $this->logger->info('el segundo juicio negó', ['tool' => $tool]);
+
             $motivo = trim($m[1]);
 
             $motivo = $motivo !== ''

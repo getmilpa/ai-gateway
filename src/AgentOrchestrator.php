@@ -99,9 +99,6 @@ class AgentOrchestrator
      */
     public function run(string $prompt, string $systemPrompt = 'You are a helpful assistant.', array $history = [], ?callable $onStep = null): string
     {
-        $tools = $this->mcpClient->getToolSummaries();
-        $this->log("Tools available: " . count($tools) . " - " . implode(', ', array_column($tools, 'name')));
-
         // Track tool results to append them to final response
         $toolResults = [];
 
@@ -143,6 +140,17 @@ class AgentOrchestrator
             }
 
             $this->log("Step $i: Calling LLM...");
+
+            // LA MESA SE REPROYECTA EN CADA PASO, y no es una optimización al revés.
+            //
+            // Esto se pedía UNA sola vez antes del bucle, y por eso el catálogo era una foto: una
+            // opción retirada a media corrida seguía enfrente del modelo hasta el final. Medido y
+            // dicho — mientras esto no se releyera, la pregunta «¿el agente volvió a mirar el mundo?»
+            // no se podía contestar, porque el mundo nunca cambiaba.
+            //
+            // No se le pregunta al agente si releyó. Se le da un mundo distinto.
+            $tools = $this->mcpClient->getToolSummaries();
+            $this->log("Step $i: tools on the table: " . count($tools) . " - " . implode(', ', array_column($tools, 'name')));
 
             // 1. Ask LLM
             $response = $this->llm->generateResponse($prompt, $tools, $messages);
@@ -241,9 +249,20 @@ class AgentOrchestrator
                         // alrededor de la compuerta en vez de detenerse ante ella. Una compuerta que se
                         // puede rodear intentando por otro lado no es una compuerta, y el humano al que
                         // se le iba a preguntar se enteraría cuando ya se hizo algo distinto.
-                        $this->log("Step $i: 🚧 TOOL REFUSED '$functionName': " . $e->getMessage());
+                        //
+                        // SALVO QUE LA OPCIÓN YA NO EXISTA. Entonces no hay nada que rodear: la
+                        // herramienta sale del catálogo en el paso siguiente, así que devolverle el
+                        // motivo no le abre una vía — le dice por qué el mundo cambió. Terminar aquí es
+                        // lo que Q-P19-D midió: el agente toma el `no` como final del trabajo y contesta
+                        // repitiendo el veredicto del verificador, 0 de 32 sin volver a mirar nada.
+                        if (!$e->optionRemoved) {
+                            $this->log("Step $i: 🚧 TOOL REFUSED '$functionName': " . $e->getMessage());
 
-                        return $e->getMessage();
+                            return $e->getMessage();
+                        }
+
+                        $this->log("Step $i: 🚧➖ OPTION REMOVED '$functionName': " . $e->getMessage());
+                        $output = $e->getMessage();
                     } catch (\Exception $e) {
                         // Cualquier OTRO fallo sí vuelve al modelo: una herramienta que truena por un
                         // argumento malo es algo que el modelo puede corregir, y devolvérselo es lo que

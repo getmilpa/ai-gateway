@@ -624,4 +624,114 @@ class AgentOrchestratorTest extends TestCase
 
         $this->assertStringContainsString('corrijo el campo', $respuesta);
     }
+
+    /**
+     * LA MESA SE VUELVE A PROYECTAR EN CADA PASO, y el modelo ve la nueva.
+     *
+     * Ésta es la costura que hacía imposible el experimento de Q-P19-H: el catálogo se pedía una sola
+     * vez antes del bucle, así que una opción retirada a media corrida seguía enfrente hasta el final.
+     * Sin esto, preguntar «¿el agente volvió a mirar el mundo?» no tiene sentido — el mundo no cambiaba.
+     *
+     * Se afirma sobre lo que RECIBE el modelo, no sobre cuántas veces se llamó al cliente: contar
+     * llamadas probaría que el código corre, no que el efecto llega.
+     */
+    public function testTheTableIsProjectedAgainOnEveryStepAndTheModelSeesIt(): void
+    {
+        $completa = [
+            ['name' => 'plugins_disable', 'description' => 'apaga', 'inputSchema' => []],
+            ['name' => 'plugins_simulate', 'description' => 'simula', 'inputSchema' => []],
+        ];
+        $sinLaQueMuta = [$completa[1]];
+
+        // Primer paso con las dos; a partir del segundo, una menos — como si la compuerta la hubiera
+        // retirado tras negar la llamada.
+        $this->mcpClient->method('getToolSummaries')
+            ->willReturnOnConsecutiveCalls($completa, $sinLaQueMuta, $sinLaQueMuta);
+        $this->mcpClient->method('callTool')->willReturn('ok');
+
+        $vistos = [];
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnCallback(function (string $p, array $tools, array $m) use (&$vistos): array {
+                $vistos[] = array_column($tools, 'name');
+
+                return \count($vistos) === 1
+                    ? [
+                        'role' => 'assistant',
+                        'content' => '',
+                        'tool_calls' => [
+                            ['id' => 'c1', 'function' => ['name' => 'plugins_simulate', 'arguments' => '{}']],
+                        ],
+                    ]
+                    : ['role' => 'assistant', 'content' => 'ya vi el grafo'];
+            });
+
+        $this->orchestrator->run('¿qué deja de funcionar si deshabilito X?');
+
+        self::assertSame(['plugins_disable', 'plugins_simulate'], $vistos[0]);
+        self::assertSame(['plugins_simulate'], $vistos[1], 'el segundo paso ve la mesa nueva, no la foto');
+    }
+
+    /**
+     * UNA NEGATIVA QUE RETIRÓ LA OPCIÓN NO TERMINA LA VUELTA: el motivo vuelve al modelo y el bucle
+     * sigue.
+     *
+     * Es el eslabón que faltaba de la cadena. Sin esto, quitar la opción no sirve de nada: la corrida
+     * se acaba en la negativa y el agente nunca llega a ver la mesa nueva. Medido el 2026-08-02 contra
+     * el modelo real, con la retirada ya puesta: `steps: 1`, y la respuesta era el veredicto del
+     * verificador repetido — exactamente el brazo A de Q-P19-D.
+     */
+    public function testARefusalThatRemovedTheOptionKeepsTheLoopGoing(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'plugins_simulate', 'description' => 'simula', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willThrowException(
+            new \Milpa\AiGateway\ToolCallRefusedException('eso va más allá de lo que se pidió', optionRemoved: true),
+        );
+
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(
+                [
+                    'role' => 'assistant',
+                    'content' => '',
+                    'tool_calls' => [
+                        ['id' => 'c1', 'function' => ['name' => 'plugins_disable', 'arguments' => '{}']],
+                    ],
+                ],
+                ['role' => 'assistant', 'content' => 'entonces lo simulo'],
+            );
+
+        self::assertStringContainsString('entonces lo simulo', $this->orchestrator->run('¿qué pasa si…?'));
+    }
+
+    /**
+     * Y una negativa que NO retiró nada sigue terminando la vuelta.
+     *
+     * Es el piso pidiendo permiso o exigiendo firma: hay una pregunta abierta esperando a un humano, y
+     * seguir sería contestarla por él. Esta prueba es la que impide que el arreglo de arriba se
+     * generalice a la negativa que sí tiene que detener al agente.
+     */
+    public function testARefusalThatRemovedNothingStillEndsTheRun(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'plugins_disable', 'description' => 'apaga', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willThrowException(
+            new \Milpa\AiGateway\ToolCallRefusedException('hace falta permiso'),
+        );
+
+        $this->llmService->expects($this->once())
+            ->method('generateResponse')
+            ->willReturn([
+                'role' => 'assistant',
+                'content' => '',
+                'tool_calls' => [
+                    ['id' => 'c1', 'function' => ['name' => 'plugins_disable', 'arguments' => '{}']],
+                ],
+            ]);
+
+        self::assertSame('hace falta permiso', $this->orchestrator->run('apágalo'));
+    }
 }

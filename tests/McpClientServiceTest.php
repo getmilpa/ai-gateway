@@ -379,4 +379,70 @@ class McpClientServiceTest extends TestCase
 
         $this->assertSame(0, $grabadora->veces);
     }
+
+    /** Una opción retirada deja de estar en el catálogo — el catálogo es la mesa proyectada. */
+    public function testAnOptionOffTheTableIsNotInTheCatalogue(): void
+    {
+        $this->registry->register('plugins_disable', 'apaga', [], fn () => null);
+        $this->registry->register('plugins_simulate', 'simula', [], fn () => null);
+
+        $mesa = new MesaDeMentiras(['plugins_disable']);
+        $cliente = new McpClientService($this->registry, null, null, $mesa);
+
+        $this->assertSame(['plugins_simulate'], array_column($cliente->getToolSummaries(), 'name'));
+    }
+
+    /**
+     * EL CATÁLOGO SE VUELVE A DERIVAR EN CADA CONSULTA, no se captura al construir.
+     *
+     * Es el control que vuelve medible el falsificador 2 de Q-P19-H («insiste con la herramienta
+     * ausente»): si esta prueba fallara, el catálogo sería una foto y esa insistencia no diría nada
+     * sobre el agente — el mundo nunca habría cambiado.
+     */
+    public function testTheCatalogueIsDerivedAgainOnEveryCallNotCapturedOnce(): void
+    {
+        $this->registry->register('plugins_disable', 'apaga', [], fn () => null);
+        $this->registry->register('plugins_simulate', 'simula', [], fn () => null);
+
+        $mesa = new MesaDeMentiras([]);
+        $cliente = new McpClientService($this->registry, null, null, $mesa);
+
+        $this->assertCount(2, $cliente->getToolSummaries());
+
+        $mesa->remove('plugins_disable', 'beyond_request');
+
+        $this->assertSame(['plugins_simulate'], array_column($cliente->getToolSummaries(), 'name'));
+    }
+
+    /** Sin mesa, el catálogo es el registro entero: la ausencia de política no es una política nueva. */
+    public function testWithoutATableNothingIsFiltered(): void
+    {
+        $this->registry->register('plugins_disable', 'apaga', [], fn () => null);
+
+        $this->assertCount(1, (new McpClientService($this->registry))->getToolSummaries());
+    }
+}
+
+/** @internal */
+final class MesaDeMentiras implements \Milpa\AiGateway\OptionTable
+{
+    /** @param list<string> $fuera */
+    public function __construct(private array $fuera = [])
+    {
+    }
+
+    public function remove(string $option, string $code, ?string $message = null): void
+    {
+        $this->fuera[] = $option;
+    }
+
+    public function removed(): array
+    {
+        return array_values($this->fuera);
+    }
+
+    public function wasRemoved(string $option): bool
+    {
+        return \in_array($option, $this->fuera, true);
+    }
 }

@@ -158,6 +158,74 @@ final class SecondOpinionGateTest extends TestCase
         self::assertNotEmpty($bitacora->lineas, 'un silencio que pasa por aprobación tiene que quedar escrito');
     }
 
+    /**
+     * Una respuesta VACÍA también se dice — el docblock promete «no calla» y esta vía callaba.
+     *
+     * Lo encontró una revisión adversaria comparando la promesa contra el código: timeout y párrafo
+     * sin veredicto ya se decían, la respuesta vacía no. Las tres son la misma confusión — un juez que
+     * no opinó y se ve idéntico a uno que aprobó.
+     */
+    public function testAnEmptyAnswerIsSaidNotSwallowed(): void
+    {
+        $bitacora = new BitacoraEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia(''),
+            'x',
+            ['plugins_disable'],
+            logger: $bitacora,
+        );
+
+        self::assertNull($puerta->refuse('plugins_disable', []));
+        self::assertNotEmpty($bitacora->lineas, 'una respuesta vacía que pasa en silencio se lee como aprobación');
+    }
+
+    /**
+     * La negativa deja un testigo FUERA del stream.
+     *
+     * Un falsificador «negó y el hecho no está en el stream» sólo se puede operacionalizar si la
+     * negativa tiene un canal independiente del propio stream que se está verificando. Ese canal es
+     * esta línea.
+     */
+    public function testADenialLeavesAWitnessOutsideTheStream(): void
+    {
+        $bitacora = new BitacoraEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('DENY: va más allá'),
+            'x',
+            ['plugins_disable'],
+            logger: $bitacora,
+        );
+
+        $puerta->refuse('plugins_disable', []);
+
+        self::assertNotEmpty($bitacora->lineas);
+        self::assertStringContainsString('negó', implode(' ', $bitacora->lineas));
+    }
+
+    /**
+     * Una APROBACIÓN no deja línea — el silencio del juez que aprobó no es un fallo.
+     *
+     * El warning de refuse() se disparaba también en los ALLOW (juzgar devuelve null en los dos
+     * casos), y en la tanda de Q-P19-K produjo 61 «no pudo opinar» con cero caídas reales: la métrica
+     * de juez-caído salió 16/16 hasta decodificarla a mano. Quien informa es quien sabe la causa.
+     */
+    public function testAnApprovalLeavesNoLineBecauseItIsNotAFailure(): void
+    {
+        $bitacora = new BitacoraEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('ALLOW'),
+            'deshabilita X',
+            ['plugins_disable'],
+            logger: $bitacora,
+        );
+
+        self::assertNull($puerta->refuse('plugins_disable', []));
+        self::assertSame([], $bitacora->lineas, 'un ALLOW que se loguea como caída fabrica una métrica de fallos');
+    }
+
     /** Lo que se le manda al modelo trae la PETICIÓN y la llamada — sin eso no hay contra qué juzgar. */
     public function testTheModelSeesTheRequestAndTheProposedCall(): void
     {
@@ -174,6 +242,112 @@ final class SecondOpinionGateTest extends TestCase
         self::assertStringContainsString('¿Qué deja de funcionar si deshabilito X?', $modelo->ultimoPrompt);
         self::assertStringContainsString('plugins_disable', $modelo->ultimoPrompt);
         self::assertStringContainsString('"name": "X"', $modelo->ultimoPrompt);
+    }
+
+    /**
+     * Cuando ESTE juicio niega, la opción sale de la mesa — la negativa deja de ser un mensaje.
+     *
+     * Q-P19-D/E midieron que un `no`, incluso nombrando la alternativa, no redirige: 0 de 32 volvieron
+     * a llamar una herramienta. Quitarla convierte una petición de conducta en un hecho del entorno,
+     * que es lo único que Q-P19-F midió que sí mueve al agente.
+     */
+    public function testWhenTheSecondReaderDeniesTheOptionLeavesTheTable(): void
+    {
+        $mesa = new MesaEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('DENY: la pregunta era qué pasaría'),
+            '¿Qué deja de funcionar si deshabilito X?',
+            ['plugins_disable'],
+            mesa: $mesa,
+        );
+
+        $puerta->refuse('plugins_disable', ['name' => 'X']);
+
+        self::assertSame([['plugins_disable', 'beyond_request']], $mesa->quitadas);
+    }
+
+    /**
+     * EL `no` DEL PISO NO RETIRA LA OPCIÓN, y ésta es la prueba que sostiene la distinción entera.
+     *
+     * El piso niega con `AskPermission` o `RequireSignature`: las dos son **una pausa**, no un
+     * imposible. Quien la recibe puede conceder el permiso o firmar, y la opción tiene que seguir
+     * estando cuando la sesión vuelva. Retirarla aquí convertiría «todavía no» en «nunca», y el agente
+     * se encontraría la mesa sin la herramienta que le acaban de autorizar.
+     */
+    public function testTheFloorsRefusalIsAPauseAndDoesNotTakeTheOptionOffTheTable(): void
+    {
+        $mesa = new MesaEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueNiega('hace falta permiso para esto'),
+            new ModeloEspia('DENY: da igual, ni se le pregunta'),
+            'lo que sea',
+            ['plugins_disable'],
+            mesa: $mesa,
+        );
+
+        self::assertSame('hace falta permiso para esto', $puerta->refuse('plugins_disable', []));
+        self::assertSame([], $mesa->quitadas, 'una pausa no es un imposible');
+    }
+
+    /** Si el segundo lector aprueba, la mesa no se toca. */
+    public function testAnApprovedCallLeavesTheTableAlone(): void
+    {
+        $mesa = new MesaEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('ALLOW'),
+            'deshabilita el plugin X',
+            ['plugins_disable'],
+            mesa: $mesa,
+        );
+
+        self::assertNull($puerta->refuse('plugins_disable', ['name' => 'X']));
+        self::assertSame([], $mesa->quitadas);
+    }
+
+    /**
+     * Un verificador que no pudo opinar TAMPOCO retira.
+     *
+     * Sin esto, una caída de red vaciaría la mesa: cada llamada que el modelo no alcanzó a juzgar se
+     * llevaría su opción, y el agente terminaría sin herramientas por un problema de conectividad. Es
+     * la misma razón por la que un fallo deja pasar en vez de negar.
+     */
+    public function testAJudgeThatCouldNotAnswerRemovesNothing(): void
+    {
+        $mesa = new MesaEspia();
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloQueRevienta(),
+            'x',
+            ['plugins_disable'],
+            mesa: $mesa,
+        );
+
+        self::assertNull($puerta->refuse('plugins_disable', []));
+        self::assertSame([], $mesa->quitadas);
+    }
+}
+
+/** @internal */
+final class MesaEspia implements \Milpa\AiGateway\OptionTable
+{
+    /** @var list<array{0: string, 1: string}> */
+    public array $quitadas = [];
+
+    public function remove(string $option, string $code, ?string $message = null): void
+    {
+        $this->quitadas[] = [$option, $code];
+    }
+
+    public function removed(): array
+    {
+        return array_map(static fn (array $q): string => $q[0], $this->quitadas);
+    }
+
+    public function wasRemoved(string $option): bool
+    {
+        return \in_array($option, $this->removed(), true);
     }
 }
 

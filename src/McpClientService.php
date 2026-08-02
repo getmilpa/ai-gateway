@@ -29,21 +29,26 @@ class McpClientService
 
     private ?ToolCallGate $gate;
     private ?ToolCallRecorder $recorder;
+    private ?OptionTable $mesa;
 
     /**
      * @param ToolCallGate|null     $gate     se consulta antes de cada llamada y puede negarla. Sin
      *                                        compuerta, el bucle corre como corría: la ausencia de
      *                                        política no puede ser una política nueva.
      * @param ToolCallRecorder|null $recorder se le avisa después, con lo que la herramienta contestó
+     * @param OptionTable|null      $mesa     qué opciones siguen enfrente. Sin mesa, el catálogo es el
+     *                                        registro entero, que es como corría antes
      */
     public function __construct(
         ToolRegistry $internalRegistry,
         ?ToolCallGate $gate = null,
         ?ToolCallRecorder $recorder = null,
+        ?OptionTable $mesa = null,
     ) {
         $this->internalRegistry = $internalRegistry;
         $this->gate = $gate;
         $this->recorder = $recorder;
+        $this->mesa = $mesa;
     }
 
     /**
@@ -73,11 +78,30 @@ class McpClientService
      *
      * In the future, merge with external tools fetched via HTTP/SSE.
      *
+     * ── ESTO ES UNA PROYECCIÓN, Y POR ESO SE VUELVE A PEDIR ─────────────────────────────────────
+     *
+     * El catálogo no es un dato: se DERIVA del registro menos lo que ya salió de la mesa. Por eso
+     * {@see OptionTable::removed()} se consulta en cada llamada y no en el constructor — y por eso
+     * {@see AgentOrchestrator} pregunta esto en cada paso del bucle en vez de una sola vez al empezar.
+     *
+     * Sin esas dos cosas juntas, quitar una opción no cambia nada de lo que el modelo ve: el hecho se
+     * apenda, el fold lo refleja, y el catálogo sigue siendo la foto que se tomó antes de empezar.
+     *
      * @return list<array{name: string, description: string, inputSchema: array<string, mixed>, version?: string, outputSchema?: array<string, mixed>}>
      */
     public function getToolSummaries(): array
     {
-        return $this->internalRegistry->getToolSummaries();
+        $catalogo = $this->internalRegistry->getToolSummaries();
+
+        $fuera = $this->mesa?->removed() ?? [];
+        if ($fuera === []) {
+            return $catalogo;
+        }
+
+        return array_values(array_filter(
+            $catalogo,
+            static fn (array $t): bool => !\in_array($t['name'], $fuera, true),
+        ));
     }
 
     /**
@@ -92,7 +116,13 @@ class McpClientService
         if ($this->gate !== null) {
             $motivo = $this->gate->refuse($name, $args);
             if ($motivo !== null) {
-                throw new ToolCallRefusedException($motivo);
+                // SE LE PREGUNTA A LA MESA, no se inventa un canal para avisar. Si la compuerta retiró
+                // esta opción al negar, la mesa ya lo sabe — y leerlo de ahí evita que quien niega y
+                // quien informa sean dos fuentes que puedan discrepar.
+                throw new ToolCallRefusedException(
+                    $motivo,
+                    optionRemoved: $this->mesa?->wasRemoved($name) ?? false,
+                );
             }
         }
 
