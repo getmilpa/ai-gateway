@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/getmilpa/ai-gateway/compare/v0.4.2...v0.5.0) (2026-08-02)
+
+
+### Features
+
+* SecondOpinionGate — a second reader between the proposed call and its execution ([c4d5eec](https://github.com/getmilpa/ai-gateway/commit/c4d5eec7c19fb8be522549f15c83e4797820f804))
+
 ## [0.4.2](https://github.com/getmilpa/ai-gateway/compare/v0.4.1...v0.4.2) (2026-08-01)
 
 
