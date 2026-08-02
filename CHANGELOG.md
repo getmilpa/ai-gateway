@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/getmilpa/ai-gateway/compare/v0.5.0...v0.6.0) (2026-08-02)
+
+
+### Features
+
+* a refusal that names the observable alternative ([9d20bb9](https://github.com/getmilpa/ai-gateway/commit/9d20bb9f23f09c3c0d43bff3206bd15807b535c3))
+
 ## [0.5.0](https://github.com/getmilpa/ai-gateway/compare/v0.4.2...v0.5.0) (2026-08-02)
 
 
