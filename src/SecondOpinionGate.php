@@ -65,6 +65,8 @@ final readonly class SecondOpinionGate implements ToolCallGate
         private LlmServiceInterface $modelo,
         private string $tarea,
         private array $jamas = [],
+        /** @var array<string, string> */
+        private array $alternativas = [],
         private LoggerInterface $logger = new NullLogger(),
     ) {
     }
@@ -173,9 +175,18 @@ final readonly class SecondOpinionGate implements ToolCallGate
         if (preg_match('/\bDENY\b\s*:?\s*(.*)/i', $texto, $m) === 1) {
             $motivo = trim($m[1]);
 
-            return $motivo !== ''
+            $motivo = $motivo !== ''
                 ? $motivo
                 : 'un segundo lector consideró que esto va más allá de lo que se pidió';
+
+            // Y LA OTRA MITAD: qué sí. Un `no` correcto y estéril deja al agente adivinando qué hacer
+            // con ese no, y eso ya se midió: se detiene. La alternativa va en la misma frase porque es
+            // lo único que va a leer.
+            $enVezDe = $this->alternativas[$tool] ?? null;
+
+            return $enVezDe !== null
+                ? $motivo . ' — en vez de eso corre `' . $enVezDe . '`, que responde lo mismo sin cambiar nada.'
+                : $motivo;
         }
 
         if (preg_match('/\bALLOW\b/i', $texto) === 1) {

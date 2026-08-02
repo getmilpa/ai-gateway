@@ -51,6 +51,42 @@ final class SecondOpinionGateTest extends TestCase
         );
     }
 
+    /**
+     * La negativa dice QUÉ SÍ, y en la misma frase.
+     *
+     * Q-P19-D midió que un `no` correcto y estéril apaga al agente: 0 de 32 corridas volvieron a
+     * llamar una herramienta. La alternativa la declara el sistema —no la inventa el modelo— porque
+     * pedirle que la adivine sería mover la adivinación de lugar, no quitarla.
+     */
+    public function testTheRefusalNamesTheObservableAlternative(): void
+    {
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('DENY: la pregunta era qué pasaría'),
+            '¿Qué deja de funcionar si deshabilito X?',
+            ['plugins_disable'],
+            ['plugins_disable' => 'plugins_simulate'],
+        );
+
+        $motivo = (string) $puerta->refuse('plugins_disable', ['name' => 'X']);
+
+        self::assertStringContainsString('la pregunta era qué pasaría', $motivo);
+        self::assertStringContainsString('plugins_simulate', $motivo);
+    }
+
+    /** Sin alternativa declarada, la negativa es exactamente la de antes. */
+    public function testWithoutADeclaredAlternativeTheRefusalIsUnchanged(): void
+    {
+        $puerta = new SecondOpinionGate(
+            new PisoQueDejaPasar(),
+            new ModeloEspia('DENY: no hacía falta'),
+            'x',
+            ['plugins_disable'],
+        );
+
+        self::assertSame('no hacía falta', $puerta->refuse('plugins_disable', []));
+    }
+
     /** Y cuando aprueba, deja pasar. */
     public function testWhenItAllowsTheCallGoesThrough(): void
     {
@@ -94,7 +130,7 @@ final class SecondOpinionGateTest extends TestCase
             new ModeloQueRevienta(),
             'x',
             ['plugins_disable'],
-            $bitacora,
+            logger: $bitacora,
         );
 
         self::assertNull($puerta->refuse('plugins_disable', []));
@@ -115,7 +151,7 @@ final class SecondOpinionGateTest extends TestCase
             new ModeloEspia('Pues depende de varias cosas, habría que ver el contexto…'),
             'x',
             ['plugins_disable'],
-            $bitacora,
+            logger: $bitacora,
         );
 
         self::assertNull($puerta->refuse('plugins_disable', []));
