@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/getmilpa/ai-gateway/compare/v0.6.0...v0.7.0) (2026-08-02)
+
+
+### Features
+
+* the option table — a per-step projection, and a gate that is never silent ([0f7b213](https://github.com/getmilpa/ai-gateway/commit/0f7b213c3eb32cf3929683bdfa0faf8456d0f752))
+
 ## [0.6.0](https://github.com/getmilpa/ai-gateway/compare/v0.5.0...v0.6.0) (2026-08-02)
 
 
