@@ -17,6 +17,7 @@ namespace Milpa\AiGateway\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Milpa\AiGateway\AgentOrchestrator;
+use Milpa\AiGateway\PlanBoard;
 use Milpa\AiGateway\LlmService;
 use Milpa\AiGateway\ToolCallRefusedException;
 use Milpa\AiGateway\McpClientService;
@@ -733,5 +734,140 @@ class AgentOrchestratorTest extends TestCase
             ]);
 
         self::assertSame('hace falta permiso', $this->orchestrator->run('apágalo'));
+    }
+
+    /**
+     * LA RESPUESTA ES LO QUE EL AGENTE DIJO — sin el JSON crudo pegado debajo.
+     *
+     * El bucle anexaba el resultado de cada herramienta bajo un «📊 Datos:», con una heurística de
+     * duplicados que buscaba identificadores numéricos y que contra datos reales nunca acertaba: el
+     * bloque salía siempre y duplicaba lo que el modelo ya había transcrito. Pintar el dato es
+     * trabajo de la superficie —el resultado viaja en la proyección de la sesión— y no del modelo.
+     */
+    public function testTheAnswerCarriesNoRawToolDump(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'plugins_list', 'description' => 'lista', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willReturn('{"plugins":[{"name":"HelloPlugin"}]}');
+
+        $this->llmService->method('generateResponse')->willReturnOnConsecutiveCalls(
+            [
+                'role' => 'assistant',
+                'content' => '',
+                'tool_calls' => [['id' => 'c1', 'function' => ['name' => 'plugins_list', 'arguments' => '{}']]],
+            ],
+            ['role' => 'assistant', 'content' => 'Hay un plugin: HelloPlugin.'],
+        );
+
+        $respuesta = $this->orchestrator->run('¿que plugins hay?');
+
+        self::assertStringContainsString('Hay un plugin: HelloPlugin.', $respuesta);
+        self::assertStringNotContainsString('📊', $respuesta, 'el anexo se fue');
+        self::assertStringNotContainsString('{"plugins"', $respuesta, 'y el JSON crudo con el');
+    }
+
+    /**
+     * EL PLAN SE REPROYECTA EN CADA PASO — y es lo que Q-P20-B mide.
+     *
+     * El bucle no conocía `Todo`: el agente escribía su plan al stream y nada se lo volvía a poner
+     * enfrente. La prueba mira que el tablero se PREGUNTE una vez por paso, no una vez por corrida;
+     * un tablero pedido al arranque sería otra foto, que es el defecto que esto arregla.
+     */
+    public function testThePlanIsReprojectedOnEveryStep(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'plugins_list', 'description' => 'lista', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willReturn('{"ok":true}');
+
+        $veces = 0;
+        $tablero = new class ($veces) implements PlanBoard {
+            public function __construct(private int &$veces)
+            {
+            }
+
+            public function current(): ?string
+            {
+                ++$this->veces;
+
+                return '## Tu plan — vuelta ' . $this->veces;
+            }
+        };
+
+        $vistos = [];
+        $this->llmService->method('generateResponse')->willReturnCallback(
+            function (string $p, array $t, array $messages) use (&$vistos): array {
+                $planes = array_values(array_filter(
+                    $messages,
+                    static fn (array $m): bool => ($m['role'] ?? '') === 'system' && str_contains((string) ($m['content'] ?? ''), 'Tu plan'),
+                ));
+                $vistos[] = $planes;
+
+                return \count($vistos) < 2
+                    ? ['role' => 'assistant', 'content' => '', 'tool_calls' => [['id' => 'c1', 'function' => ['name' => 'plugins_list', 'arguments' => '{}']]]]
+                    : ['role' => 'assistant', 'content' => 'listo'];
+            }
+        );
+
+        $orquestador = new AgentOrchestrator($this->llmService, $this->mcpClient, 5, null, null, $tablero);
+        $orquestador->run('haz algo de tres pasos');
+
+        self::assertSame(2, $veces, 'se preguntó una vez por paso, no una por corrida');
+
+        // NO SE ACUMULA. Veinte pasos serían veinte fotos del plan, diecinueve de ellas mintiendo, y
+        // el estado más viejo quedaría indistinguible del vigente.
+        foreach ($vistos as $paso => $planes) {
+            self::assertCount(1, $planes, "el paso {$paso} vio exactamente un plan");
+        }
+        self::assertStringContainsString('vuelta 2', (string) $vistos[1][0]['content'], 'y el del segundo paso es el nuevo');
+    }
+
+    /**
+     * UN TABLERO QUE DICE `null` ES INDISTINGUIBLE DE NO TENER TABLERO.
+     *
+     * Las dos vías tienen que producir EXACTAMENTE los mismos mensajes. Es la propiedad que sostiene
+     * el brazo de control de Q-P20-B: si una sesión sin plan todavía inyectara un encabezado vacío,
+     * el brazo que mide «sin reproyección» estaría midiendo una reproyección de cero tarjetas, y la
+     * diferencia contra el otro brazo dejaría de ser atribuible.
+     *
+     * Y es también la razón de que el default sea `null`: mientras la pregunta esté abierta, lo que se
+     * despacha es lo ya medido.
+     */
+    public function testABoardThatSaysNullIsTheSameAsNoBoard(): void
+    {
+        $vacio = new class () implements PlanBoard {
+            public function current(): ?string
+            {
+                return null;
+            }
+        };
+
+        self::assertSame($this->mensajesDeUnaVuelta(null), $this->mensajesDeUnaVuelta($vacio));
+    }
+
+    /**
+     * Los mensajes que le llegaron al modelo en una vuelta, con el tablero que se le pase.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function mensajesDeUnaVuelta(?PlanBoard $tablero): array
+    {
+        $llm = $this->createMock(LlmService::class);
+        $mcp = $this->createMock(McpClientService::class);
+        $mcp->method('getToolSummaries')->willReturn([]);
+
+        $vistos = [];
+        $llm->method('generateResponse')->willReturnCallback(
+            function (string $p, array $t, array $messages) use (&$vistos): array {
+                $vistos = $messages;
+
+                return ['role' => 'assistant', 'content' => 'listo'];
+            }
+        );
+
+        (new AgentOrchestrator($llm, $mcp, 5, null, null, $tablero))->run('hola');
+
+        return $vistos;
     }
 }

@@ -27,11 +27,20 @@ use Milpa\ToolRuntime\ToolResult;
  */
 class AgentOrchestrator
 {
+    /**
+     * Lo que devuelve una vuelta que se quedó sin pasos.
+     *
+     * No es una respuesta y no debe pintarse como tal. Es pública para que la superficie la reconozca
+     * sin repetir el literal.
+     */
+    public const STEPS_EXHAUSTED = 'Error: Maximum agent steps reached.';
+
     private LlmService $llm;
     private McpClientService $mcpClient;
     private int $maxSteps;
     private ?LoggerInterface $logger;
     private ?RendererRegistry $rendererRegistry;
+    private ?PlanBoard $planBoard;
     private ?ToolContext $toolContext;
     private ?ToolResult $lastToolResult = null;
 
@@ -40,13 +49,15 @@ class AgentOrchestrator
         McpClientService $mcpClient,
         int $maxSteps = 20,
         ?LoggerInterface $logger = null,
-        ?RendererRegistry $rendererRegistry = null
+        ?RendererRegistry $rendererRegistry = null,
+        ?PlanBoard $planBoard = null
     ) {
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
         $this->maxSteps = $maxSteps;
         $this->logger = $logger;
         $this->rendererRegistry = $rendererRegistry;
+        $this->planBoard = $planBoard;
         $this->toolContext = null;
     }
 
@@ -134,6 +145,13 @@ class AgentOrchestrator
             if ($onStep !== null) {
                 try {
                     $onStep($i, 'processing');
+                } catch (RunInterrupted $e) {
+                    // LA ORDEN SÍ PASA. El `catch` de abajo existe para que una superficie que truena
+                    // pintando no mate el trabajo del agente; una interrupción es lo contrario, y
+                    // tragársela dejaría al humano viendo cómo su «para» no hace nada.
+                    $this->log("Step $i: interrupted by the surface");
+
+                    throw $e;
                 } catch (\Throwable $e) {
                     $this->log("Step $i: onStep callback error: " . $e->getMessage());
                 }
@@ -152,8 +170,28 @@ class AgentOrchestrator
             $tools = $this->mcpClient->getToolSummaries();
             $this->log("Step $i: tools on the table: " . count($tools) . " - " . implode(', ', array_column($tools, 'name')));
 
+            // EL PLAN SE REPROYECTA EN CADA PASO, POR LA MISMA RAZÓN QUE LA MESA.
+            //
+            // El plan se sacó del prompt y se puso en el stream (P16.3) para que sobreviviera a la
+            // compactación. Sobrevive para el humano y para `agent:timeline`; NO sobrevivía para el
+            // agente, porque nada lo devolvía al contexto. Al segundo paso su propio plan ya había
+            // quedado atrás en la conversación.
+            //
+            // NO SE ACUMULA. Se arma una copia de los mensajes para esta llamada y el plan viaja al
+            // final; `$messages` queda limpio. Apendarlo sería dejar veinte fotos del plan en el
+            // contexto —diecinueve de ellas mintiendo— y volvería el estado más viejo indistinguible
+            // del vigente, que es exactamente el defecto que esto arregla.
+            //
+            // Q-P20-B mide si esto sostiene la continuidad. Mientras no cierre, el default es `null`.
+            $paraElModelo = $messages;
+            $plan = $this->planBoard?->current();
+            if ($plan !== null && trim($plan) !== '') {
+                $paraElModelo[] = ['role' => 'system', 'content' => $plan];
+                $this->log("Step $i: plan reprojected (" . \strlen($plan) . " bytes)");
+            }
+
             // 1. Ask LLM
-            $response = $this->llm->generateResponse($prompt, $tools, $messages);
+            $response = $this->llm->generateResponse($prompt, $tools, $paraElModelo);
             $this->log("Step $i: LLM response - role=" . ($response['role'] ?? 'unknown') .
                 ", has_content=" . (!empty($response['content']) ? 'yes' : 'no') .
                 ", has_tool_calls=" . (isset($response['tool_calls']) ? count($response['tool_calls']) : '0'));
@@ -286,73 +324,27 @@ class AgentOrchestrator
 
                 $finalResponse = $response['content'] ?? '';
 
-                // For ToolResult-based responses, the LLM already includes the data
-                // Only append tool results for legacy string responses that might be missed
-                // Skip if most results came from ToolResult (rendered format)
-                if (!empty($toolResults) && $this->rendererRegistry === null) {
-                    // Legacy mode: append tool results only if no renderer is active
-                    $this->log("Legacy mode: checking for non-duplicate tool results to append");
-                    $nonDuplicateResults = [];
-
-                    // Extract numeric IDs from text (commonly used as identifiers in results)
-                    $extractIds = function (string $text): array {
-                        // Match patterns like "1817:", "#1817", "ID: 1817", "💰 1817:", etc.
-                        preg_match_all('/(?:^|[^\d])(\d{3,6})(?:[\:\s\]\)]|$)/m', $text, $matches);
-                        return array_unique($matches[1]);
-                    };
-
-                    $responseIds = $extractIds($finalResponse);
-                    $this->log("Response contains " . count($responseIds) . " IDs");
-
-                    foreach ($toolResults as $result) {
-                        $resultIds = $extractIds($result);
-
-                        // If the result has no IDs, check by text length comparison
-                        if (empty($resultIds)) {
-                            // For non-ID results (like time, simple text), use simpler check
-                            $resultNormalized = preg_replace('/\s+/', ' ', mb_strtolower(trim($result)));
-                            $responseNormalized = preg_replace('/\s+/', ' ', mb_strtolower($finalResponse));
-
-                            if (
-                                mb_strlen($resultNormalized) < 50 ||
-                                mb_strpos($responseNormalized, mb_substr($resultNormalized, 0, 50)) !== false
-                            ) {
-                                $this->log("Non-ID result likely duplicate, skipping");
-                                continue;
-                            }
-                            $nonDuplicateResults[] = $result;
-                            continue;
-                        }
-
-                        // Count how many IDs from result are already in response
-                        $matchCount = 0;
-                        foreach ($resultIds as $id) {
-                            if (in_array($id, $responseIds)) {
-                                $matchCount++;
-                            }
-                        }
-
-                        // $resultIds is non-empty here — the empty() branch above already
-                        // continued the loop, so count($resultIds) > 0 always holds.
-                        $matchPercentage = ($matchCount / count($resultIds)) * 100;
-                        $this->log("Result has " . count($resultIds) . " IDs, {$matchCount} found in response ({$matchPercentage}%)");
-
-                        // If more than 40% of IDs are already in response, it's a duplicate
-                        if ($matchPercentage > 40) {
-                            $this->log("Duplicate detected: {$matchPercentage}% of IDs already present");
-                            continue;
-                        }
-
-                        $nonDuplicateResults[] = $result;
-                    }
-
-                    if (!empty($nonDuplicateResults)) {
-                        $this->log("Appending " . count($nonDuplicateResults) . " non-duplicate tool results");
-                        $finalResponse .= "\n\n---\n📊 **Datos:**\n" . implode("\n\n", $nonDuplicateResults);
-                    } else {
-                        $this->log("All " . count($toolResults) . " tool results already included in response, skipping append");
-                    }
-                }
+                // EL RESULTADO CRUDO YA NO SE ANEXA A LA RESPUESTA.
+                //
+                // Esto pegaba el JSON de cada herramienta bajo un «📊 Datos:» cuando no había
+                // renderer, con una heurística de duplicados que buscaba identificadores numéricos
+                // de tres a seis dígitos en el texto. Contra datos reales no acertaba —un
+                // `plugins_list` devuelve nombres y versiones, no ids— así que el bloque salía SIEMPRE,
+                // y quien lo miraba veía dos veces lo mismo: la prosa del modelo y su fuente cruda.
+                //
+                // Se retira por tres razones, y la tercera es la que decide:
+                //
+                //   1. El modelo YA transcribe los datos en su respuesta. Anexarlos otra vez no
+                //      informa: repite.
+                //   2. La heurística no se podía sostener. Setenta líneas de adivinación sin una sola
+                //      prueba que las cubriera — se descubrió al ir a quitarlas.
+                //   3. **Pintar el dato es trabajo de la superficie, no del modelo.** El resultado
+                //      viaja en la proyección de la sesión (`activity.result`), y quien sepa pintarlo
+                //      lo arma: el TUI ya construye una tabla con las columnas que la herramienta
+                //      devolvió. Una superficie que no sepa, muestra la prosa — que es lo que había
+                //      antes de este bloque, sin la duplicación.
+                //
+                // Lo que el agente contesta vuelve a ser lo que el agente dijo.
 
                 // Prepend tool usage emoji if tools were used (more subtle)
                 if (!empty($usedToolNames)) {
@@ -366,6 +358,11 @@ class AgentOrchestrator
         }
 
         $this->log("Max steps ($this->maxSteps) reached");
-        return "Error: Maximum agent steps reached.";
+
+        // AGOTAR EL TECHO NO ES CONTESTAR, y devolverlo como texto lo volvía indistinguible de una
+        // respuesta: el TUI lo pintaba con la voz del agente, como si eso fuera lo que dijo. Se
+        // conserva la cadena por compatibilidad y se nombra, para que una superficie pueda
+        // reconocerla en vez de compararla contra un literal suyo que puede envejecer aparte.
+        return self::STEPS_EXHAUSTED;
     }
 }
