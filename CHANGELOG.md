@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/getmilpa/ai-gateway/compare/v0.7.0...v0.8.0) (2026-08-03)
+
+
+### Features
+
+* el plan del agente se puede volver a poner delante del modelo en cada paso ([a58339c](https://github.com/getmilpa/ai-gateway/commit/a58339c926cdef89ab2f1f5305c49aa67411afae))
+
 ## [0.7.0](https://github.com/getmilpa/ai-gateway/compare/v0.6.0...v0.7.0) (2026-08-02)
 
 
