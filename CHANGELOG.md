@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/getmilpa/ai-gateway/compare/v0.8.1...v0.8.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **agent:** una llamada mal formada deja de pasar por respuesta del agente ([f8fb330](https://github.com/getmilpa/ai-gateway/commit/f8fb330221fb34962245bebe32c27fab0cac6b95))
+
 ## [0.8.1](https://github.com/getmilpa/ai-gateway/compare/v0.8.0...v0.8.1) (2026-08-04)
 
 
