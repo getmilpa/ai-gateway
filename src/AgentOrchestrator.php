@@ -90,6 +90,28 @@ class AgentOrchestrator
     /**
      * Render a ToolResult based on current context.
      */
+    /**
+     * ¿Este texto es una llamada a herramienta que el canal no parseó?
+     *
+     * Se reconoce por su FORMA, no adivinando intención: los formatos que los modelos emiten cuando el
+     * canal de `tool_calls` falla son marcadores literales —`<function=…>`, `<tool_call>`,
+     * `<|tool_call|>`— y ninguno aparece en una respuesta en prosa por accidente.
+     *
+     * Deliberadamente NO se buscan frases como «voy a llamar a plugins_disable»: eso es prosa legítima,
+     * y confundirla con una llamada fallida volvería a este guardián el que se come respuestas buenas.
+     * Un detector con falsos positivos sobre la conducta normal se apaga a la semana.
+     */
+    private function looksLikeAnUnparsedToolCall(string $texto): bool
+    {
+        foreach (['<function=', '<tool_call', '</tool_call', '<|tool_call', '<invoke name='] as $marca) {
+            if (str_contains($texto, $marca)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function renderToolResult(ToolResult $result): string
     {
         if ($this->rendererRegistry && $this->toolContext) {
@@ -323,6 +345,31 @@ class AgentOrchestrator
                 $this->log("Step $i: Final response (no tool calls)");
 
                 $finalResponse = $response['content'] ?? '';
+
+                // ── UNA LLAMADA MAL FORMADA NO ES UNA RESPUESTA ─────────────────────────────────
+                //
+                // Visto en el TUI el 2026-08-04 con qwen3-coder:30b y una petición de una línea. El
+                // modelo quiso llamar `plugins_disable` y la emitió COMO TEXTO —`<function=…>`— con el
+                // canal `tool_calls` vacío, así que entraba por aquí como respuesta final: se guardó en
+                // el stream como lo que el agente contestó, la pantalla le quitó las etiquetas y enseñó
+                // «HelloPlugin», y arriba decía «listo». **La herramienta nunca corrió, no hubo pregunta
+                // de permiso, y el humano se quedó creyendo que sí.**
+                //
+                // Es la sustitución de siempre en el peor lugar posible: el INTENTO presentado como el
+                // HECHO, y con cara de éxito. Un agente que reporta hecho lo que no hizo es peor que uno
+                // que falla.
+                //
+                // NO SE INTERPRETA Y NO SE EJECUTA. Parsear ese texto sería inventar un contrato de
+                // llamada que nadie declaró y que cambia con cada versión del modelo — y ejecutar lo que
+                // salga de ahí es correr lo que el modelo escribió en prosa, sin pasar por el esquema
+                // que valida argumentos ni por la compuerta que pide permiso.
+                if ($this->looksLikeAnUnparsedToolCall($finalResponse)) {
+                    $this->log("Step {$i}: respuesta descartada — trae una llamada sin parsear");
+
+                    return 'El modelo intentó llamar una herramienta y la escribió como texto en vez de usar '
+                        . "el canal de llamadas, así que **no se ejecutó nada**. Nada cambió en esta app.\n\n"
+                        . "Lo que devolvió, tal cual:\n\n```\n" . trim($finalResponse) . "\n```";
+                }
 
                 // EL RESULTADO CRUDO YA NO SE ANEXA A LA RESPUESTA.
                 //

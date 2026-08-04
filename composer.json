@@ -58,7 +58,10 @@
         "provides": [
           "agent.model"
         ],
-        "briefing": "This app can run the agent against a configured model."
+        "briefing": "This app can run the agent against a configured model.",
+        "contracts": {
+          "agent.model": "Milpa\\AiGateway\\LlmService"
+        }
       }
     }
   }
