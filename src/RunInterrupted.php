@@ -37,6 +37,13 @@ namespace Milpa\AiGateway;
  */
 final class RunInterrupted extends \RuntimeException
 {
+    /**
+     * La interrupción que pidió el humano, con el paso en el que llegó.
+     *
+     * El número no es decorativo: quien lee «se interrumpió» necesita saber CUÁNTO alcanzó a hacerse
+     * antes, porque de eso depende si retoma o rehace. Sin él, la misma frase describe una vuelta que
+     * no empezó y una que estaba por terminar.
+     */
     public static function porElHumano(int $paso): self
     {
         return new self("la vuelta se interrumpió en el paso {$paso}");
