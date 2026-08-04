@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/getmilpa/ai-gateway/compare/v0.8.0...v0.8.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **composer:** declarar type milpa-capability para que el paquete sea descubrible por lo que es ([d1ba788](https://github.com/getmilpa/ai-gateway/commit/d1ba788c12ad71e2909b00d00a32fc2a63970d3e))
+
 ## [0.8.0](https://github.com/getmilpa/ai-gateway/compare/v0.7.0...v0.8.0) (2026-08-03)
 
 
