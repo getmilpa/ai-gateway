@@ -21,8 +21,8 @@
   ],
   "require": {
     "php": ">=8.3",
-    "milpa/core": "^0.6.2 || ^0.7 || ^0.8",
-    "milpa/tool-runtime": "^0.9 || ^0.10",
+    "milpa/core": ">=0.6.2 <1.0",
+    "milpa/tool-runtime": ">=0.9 <1.0",
     "guzzlehttp/guzzle": "^7.10",
     "guzzlehttp/psr7": "^2.7",
     "psr/http-client": "^1.0",
