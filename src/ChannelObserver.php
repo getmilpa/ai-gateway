@@ -33,6 +33,11 @@ namespace Milpa\AiGateway;
 interface ChannelObserver
 {
     /**
+     * Hands over one outbound call at the moment it is serialized.
+     *
+     * Called once per request, with the payload that becomes the body — not a copy assembled
+     * alongside it. A consumer that records this is recording what travelled.
+     *
      * @param string               $uri     Where the request is going — the provider's endpoint, or
      *                                      whichever host the app pointed at instead.
      * @param array<string, mixed> $payload The body, decoded: `model`, `messages`, and `tools` when
