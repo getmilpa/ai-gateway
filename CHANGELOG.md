@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/getmilpa/ai-gateway/compare/v0.8.2...v0.9.0) (2026-08-15)
+
+
+### Features
+
+* a channel observer sees exactly what was sent to the model ([#23](https://github.com/getmilpa/ai-gateway/issues/23)) ([49662d4](https://github.com/getmilpa/ai-gateway/commit/49662d4494095986e0caf7c72ee2d9735aee144b))
+
 ## [0.8.2](https://github.com/getmilpa/ai-gateway/compare/v0.8.1...v0.8.2) (2026-08-04)
 
 
