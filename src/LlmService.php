@@ -65,6 +65,7 @@ class LlmService implements LlmServiceInterface
     /** @var array<string,string> */
     private array $extraHeaders;
     private ?LoggerInterface $logger;
+    private ?ChannelObserver $channelObserver;
 
     /**
      * @param string|null          $baseUrl      Dónde vive el modelo. `null` es el proveedor público —
@@ -89,6 +90,7 @@ class LlmService implements LlmServiceInterface
         ?StreamFactoryInterface $streamFactory = null,
         ?string $baseUrl = null,
         array $extraHeaders = [],
+        ?ChannelObserver $channelObserver = null,
     ) {
         $this->apiKey = $apiKey;
         $this->model = $model;
@@ -96,6 +98,7 @@ class LlmService implements LlmServiceInterface
         $this->baseUrl = $baseUrl === null ? null : rtrim($baseUrl, '/');
         $this->extraHeaders = $extraHeaders;
         $this->logger = $logger;
+        $this->channelObserver = $channelObserver;
         $this->httpClient = $httpClient ?? new Client([
             'timeout' => self::DEFAULT_TIMEOUT_SECONDS,
         ]);
@@ -371,6 +374,16 @@ class LlmService implements LlmServiceInterface
      */
     private function buildJsonRequest(string $uri, array $headers, array $payload): RequestInterface
     {
+        // AQUI, y no donde el llamador arma las cosas. Las dos ramas de proveedor convergen en esta
+        // funcion para serializar, y `callAnthropic` REESCRIBE la conversacion antes de llegar:
+        // saca el `system` de los mensajes y convierte los roles `tool`. Observar rio arriba
+        // ensenaria mensajes que nunca viajaron con esa forma — que es la propiedad dura fallando en
+        // el primer intento, y con la vista creyendose fiel.
+        //
+        // Los encabezados NO se pasan. Ahi vive el `Authorization`, y una superficie de depuracion
+        // que graba credenciales deja de ser una superficie de depuracion.
+        $this->channelObserver?->observe($uri, $payload);
+
         $request = $this->requestFactory
             ->createRequest('POST', $uri)
             ->withBody($this->streamFactory->createStream((string) json_encode($payload)));
