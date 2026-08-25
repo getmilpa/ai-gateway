@@ -798,6 +798,71 @@ class LlmServiceTest extends TestCase
         self::assertSame('https://api.openai.com/v1/chat/completions', (string) $vistas[0]->getUri());
         self::assertSame('Bearer la-llave', $vistas[0]->getHeaderLine('Authorization'));
     }
+
+    /**
+     * STREAMING (greenhouse evidence/0307): con un `onStreamChunk`, la respuesta se ensambla
+     * de los deltas SSE y el callback dispara UNA VEZ POR CHUNK real — así el spinner de la TUI
+     * avanza por hecho, no por reloj (promesa `tui-says-what-it-is-doing`). El ensamblado final
+     * debe ser idéntico a la forma no-streaming: `{role, content, tool_calls?}`.
+     */
+    public function testStreamingAssemblesContentAndFiresACallbackPerChunk(): void
+    {
+        $sse = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"content\":\" mundo\"}}]}\n\n"
+             . "data: [DONE]\n\n";
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'text/event-stream'], $sse));
+        $chunks = 0;
+        $service = new LlmService('api-key', 'qwen', 'openai', null, $fake, onStreamChunk: function () use (&$chunks): void {
+            ++$chunks;
+        });
+
+        $message = $service->generateResponse('hola');
+
+        self::assertSame(['role' => 'assistant', 'content' => 'Hello mundo'], $message);
+        self::assertSame(3, $chunks, 'el callback dispara una vez por delta con contenido');
+    }
+
+    /**
+     * Los tool_calls llegan fragmentados: `function.name` una vez, `function.arguments` en
+     * pedazos, agrupados por `index`. El ensamblado debe reunirlos en la misma forma que el
+     * camino no-streaming (`callOpenAi`).
+     */
+    public function testStreamingAssemblesFragmentedToolCalls(): void
+    {
+        $sse = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"plugins_list\",\"arguments\":\"\"}}]}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"scope\\\":\"}}]}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"all\\\"}\"}}]}}]}\n\n"
+             . "data: [DONE]\n\n";
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'text/event-stream'], $sse));
+        $service = new LlmService('api-key', 'qwen', 'openai', null, $fake, onStreamChunk: static fn (): null => null);
+
+        $message = $service->generateResponse('hola', [['name' => 'plugins_list', 'description' => 'x', 'inputSchema' => []]]);
+
+        self::assertSame('assistant', $message['role']);
+        self::assertArrayHasKey('tool_calls', $message);
+        self::assertCount(1, $message['tool_calls']);
+        self::assertSame('call_1', $message['tool_calls'][0]['id']);
+        self::assertSame('function', $message['tool_calls'][0]['type']);
+        self::assertSame('plugins_list', $message['tool_calls'][0]['function']['name']);
+        self::assertSame('{"scope":"all"}', $message['tool_calls'][0]['function']['arguments']);
+    }
+
+    /** Sin `onStreamChunk`, NADA cambia: no se pide `stream`, y el cuerpo se lee de una sola vez. */
+    public function testWithoutACallbackTheRequestDoesNotAskForStreaming(): void
+    {
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'choices' => [['message' => ['role' => 'assistant', 'content' => 'directo']]],
+        ])));
+        $service = new LlmService('api-key', 'qwen', 'openai', null, $fake);
+
+        $message = $service->generateResponse('hola');
+
+        self::assertSame(['role' => 'assistant', 'content' => 'directo'], $message);
+        $enviado = json_decode((string) $fake->lastRequest->getBody(), true);
+        self::assertArrayNotHasKey('stream', $enviado, 'sin callback no se pide streaming');
+    }
+
 }
 
 /**
