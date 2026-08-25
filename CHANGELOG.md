@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/getmilpa/ai-gateway/compare/v0.10.0...v0.11.0) (2026-08-25)
+
+
+### Features
+
+* stream the OpenAI-compatible call for honest per-chunk progress ([#26](https://github.com/getmilpa/ai-gateway/issues/26)) ([b5f681a](https://github.com/getmilpa/ai-gateway/commit/b5f681a1d403e816d9f12ca1aea2f9c6ecd5fae7))
+
 ## [0.8.2](https://github.com/getmilpa/ai-gateway/compare/v0.8.1...v0.8.2) (2026-08-04)
 
 
