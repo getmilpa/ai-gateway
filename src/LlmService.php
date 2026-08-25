@@ -24,6 +24,7 @@ use Psr\Http\Message\RequestFactoryInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamFactoryInterface;
+use Psr\Http\Message\StreamInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -68,6 +69,17 @@ class LlmService implements LlmServiceInterface
     private ?ChannelObserver $channelObserver;
 
     /**
+     * Fires ONCE PER REAL SSE CHUNK while the model is answering, so a live surface (the TUI
+     * spinner) can advance one frame per fact rather than per clock — honest motion that STOPS
+     * if the model stalls (greenhouse evidence/0307, promise `tui-says-what-it-is-doing`). Its
+     * presence is also the switch: set → the OpenAI-compatible call streams; null → the call
+     * stays the single buffered request it was, byte for byte.
+     *
+     * @var (\Closure(string): void)|null
+     */
+    private ?\Closure $onStreamChunk;
+
+    /**
      * @param string|null          $baseUrl      Dónde vive el modelo. `null` es el proveedor público —
      *                                           `api.openai.com` o `api.anthropic.com`— y cualquier otra cosa
      *                                           es un endpoint compatible: un Ollama en la LAN, un vLLM, un
@@ -91,6 +103,7 @@ class LlmService implements LlmServiceInterface
         ?string $baseUrl = null,
         array $extraHeaders = [],
         ?ChannelObserver $channelObserver = null,
+        ?\Closure $onStreamChunk = null,
     ) {
         $this->apiKey = $apiKey;
         $this->model = $model;
@@ -99,6 +112,7 @@ class LlmService implements LlmServiceInterface
         $this->extraHeaders = $extraHeaders;
         $this->logger = $logger;
         $this->channelObserver = $channelObserver;
+        $this->onStreamChunk = $onStreamChunk;
         $this->httpClient = $httpClient ?? new Client([
             'timeout' => self::DEFAULT_TIMEOUT_SECONDS,
         ]);
@@ -160,6 +174,38 @@ class LlmService implements LlmServiceInterface
             $payload['tool_choice'] = 'auto';
         }
 
+        // STREAMING SÓLO CUANDO ALGUIEN MIRA. Con un `onStreamChunk` la respuesta llega por SSE y
+        // el callback late una vez por delta real — así el spinner de una superficie viva avanza por
+        // hecho, no por reloj (evidence/0307). Sin él, el camino queda IDÉNTICO: una sola petición
+        // buffereada. Pedir `stream` sin consumir en vivo no gana nada, así que sólo se pide aquí.
+        if ($this->onStreamChunk !== null) {
+            $payload['stream'] = true;
+
+            try {
+                $request = $this->buildJsonRequest($this->uri('https://api.openai.com', '/v1/chat/completions'), [
+                    'Authorization' => 'Bearer ' . $this->apiKey,
+                    'Content-Type' => 'application/json',
+                ], $payload);
+
+                // PSR-18 `sendRequest()` NO PUEDE STREAMEAR EN VIVO: Guzzle buffea el cuerpo entero
+                // antes de volver (su bolsa de opciones no viaja por PSR-18). El streaming vivo exige
+                // `GuzzleHttp\ClientInterface::send($req, ['stream' => true])`. Un cliente inyectado
+                // que no sea Guzzle (las pruebas) cae al `sendRequest` buffereado: el parser corre
+                // igual sobre el cuerpo ya descargado —correcto, sólo que no en vivo—.
+                $response = $this->httpClient instanceof \GuzzleHttp\ClientInterface
+                    ? $this->httpClient->send($request, ['stream' => true])
+                    : $this->httpClient->sendRequest($request);
+
+                $this->assertSuccessStatus($response, 'OpenAI');
+
+                return $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk);
+            } catch (\Throwable $e) {
+                // `send()` lanza `GuzzleException`, que NO es `ClientExceptionInterface`; se atrapa
+                // ancho para conservar el contrato del mensaje que los llamadores esperan.
+                throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
+            }
+        }
+
         try {
             $request = $this->buildJsonRequest($this->uri('https://api.openai.com', '/v1/chat/completions'), [
                 'Authorization' => 'Bearer ' . $this->apiKey,
@@ -176,6 +222,88 @@ class LlmService implements LlmServiceInterface
         } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
         }
+    }
+
+    /**
+     * Reads an OpenAI-compatible SSE body incrementally, firing `$onChunk` once per delta that
+     * carries a real fragment, and assembles the SAME `{role, content, tool_calls?}` array the
+     * buffered path returns. Tool-call fragments are grouped by their `index`: `function.name`
+     * arrives once, `function.arguments` in pieces to concatenate.
+     *
+     * @param \Closure(string): void $onChunk
+     *
+     * @return array<string, mixed>
+     */
+    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk): array
+    {
+        $content = '';
+        /** @var array<int, array{id: string, type: string, function: array{name: string, arguments: string}}> $toolCalls */
+        $toolCalls = [];
+        $buffer = '';
+
+        $handle = static function (string $line) use (&$content, &$toolCalls, $onChunk): void {
+            if (!str_starts_with($line, 'data:')) {
+                return; // comments (':' keep-alive) and blank separators
+            }
+            $data = trim(substr($line, \strlen('data:')));
+            if ($data === '' || $data === '[DONE]') {
+                return;
+            }
+            $json = json_decode($data, true);
+            if (!\is_array($json)) {
+                return;
+            }
+            $delta = $json['choices'][0]['delta'] ?? null;
+            if (!\is_array($delta)) {
+                return;
+            }
+
+            $fired = false;
+            if (isset($delta['content']) && \is_string($delta['content']) && $delta['content'] !== '') {
+                $content .= $delta['content'];
+                $onChunk($delta['content']);
+                $fired = true;
+            }
+
+            foreach ($delta['tool_calls'] ?? [] as $tc) {
+                $i = (int) ($tc['index'] ?? 0);
+                $toolCalls[$i] ??= ['id' => '', 'type' => 'function', 'function' => ['name' => '', 'arguments' => '']];
+                if (isset($tc['id'])) {
+                    $toolCalls[$i]['id'] = (string) $tc['id'];
+                }
+                if (isset($tc['type'])) {
+                    $toolCalls[$i]['type'] = (string) $tc['type'];
+                }
+                if (isset($tc['function']['name'])) {
+                    $toolCalls[$i]['function']['name'] .= (string) $tc['function']['name'];
+                }
+                if (isset($tc['function']['arguments'])) {
+                    $toolCalls[$i]['function']['arguments'] .= (string) $tc['function']['arguments'];
+                }
+                if (!$fired) {
+                    $onChunk('');
+                    $fired = true;
+                }
+            }
+        };
+
+        while (!$body->eof()) {
+            $buffer .= $body->read(8192);
+            while (($nl = strpos($buffer, "\n")) !== false) {
+                $handle(rtrim(substr($buffer, 0, $nl), "\r"));
+                $buffer = substr($buffer, $nl + 1);
+            }
+        }
+        if ($buffer !== '') {
+            $handle(rtrim($buffer, "\r"));
+        }
+
+        $message = ['role' => 'assistant', 'content' => $content];
+        if ($toolCalls !== []) {
+            $message['tool_calls'] = array_values($toolCalls);
+        }
+
+        return $message;
     }
 
     /**
