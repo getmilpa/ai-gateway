@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/getmilpa/ai-gateway/compare/v0.11.0...v0.12.0) (2026-08-28)
+
+
+### Features
+
+* publish what a model call cost via an optional ReturnObserver seam ([#28](https://github.com/getmilpa/ai-gateway/issues/28)) ([569ef70](https://github.com/getmilpa/ai-gateway/commit/569ef70dbd223aeda4fdb8d2882c056f7217218f))
+
 ## [0.11.0](https://github.com/getmilpa/ai-gateway/compare/v0.10.0...v0.11.0) (2026-08-25)
 
 
