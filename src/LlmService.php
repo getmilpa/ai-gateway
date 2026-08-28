@@ -198,7 +198,11 @@ class LlmService implements LlmServiceInterface
 
                 $this->assertSuccessStatus($response, 'OpenAI');
 
-                return $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk);
+                $streamUsage = null;
+                $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage);
+                $this->emitReturn($this->uri('https://api.openai.com', '/v1/chat/completions'), $streamUsage);
+
+                return $streamMessage;
             } catch (\Throwable $e) {
                 // `send()` lanza `GuzzleException`, que NO es `ClientExceptionInterface`; se atrapa
                 // ancho para conservar el contrato del mensaje que los llamadores esperan.
@@ -207,7 +211,8 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $request = $this->buildJsonRequest($this->uri('https://api.openai.com', '/v1/chat/completions'), [
+            $openAiUri = $this->uri('https://api.openai.com', '/v1/chat/completions');
+            $request = $this->buildJsonRequest($openAiUri, [
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
             ], $payload);
@@ -217,7 +222,9 @@ class LlmService implements LlmServiceInterface
             $this->assertSuccessStatus($response, 'OpenAI');
 
             $body = json_decode((string) $response->getBody(), true);
-            return $body['choices'][0]['message'] ?? [];
+            $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+
+            return \is_array($body) ? ($body['choices'][0]['message'] ?? []) : [];
 
         } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
@@ -230,18 +237,21 @@ class LlmService implements LlmServiceInterface
      * buffered path returns. Tool-call fragments are grouped by their `index`: `function.name`
      * arrives once, `function.arguments` in pieces to concatenate.
      *
-     * @param \Closure(string): void $onChunk
+     * @param \Closure(string): void    $onChunk
+     * @param array<string, mixed>|null $usage   Out-param: the provider's own usage block from the
+     *                                           final chunk, when one carried it, else left null.
      *
      * @return array<string, mixed>
      */
-    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk): array
+    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk, ?array &$usage = null): array
     {
+        $usage = null;
         $content = '';
         /** @var array<int, array{id: string, type: string, function: array{name: string, arguments: string}}> $toolCalls */
         $toolCalls = [];
         $buffer = '';
 
-        $handle = static function (string $line) use (&$content, &$toolCalls, $onChunk): void {
+        $handle = static function (string $line) use (&$content, &$toolCalls, &$usage, $onChunk): void {
             if (!str_starts_with($line, 'data:')) {
                 return; // comments (':' keep-alive) and blank separators
             }
@@ -253,6 +263,13 @@ class LlmService implements LlmServiceInterface
             if (!\is_array($json)) {
                 return;
             }
+            // The usage-only final chunk (OpenAI's `stream_options.include_usage`, and what
+            // llama.cpp emits unprompted) carries an empty `choices` and a top-level `usage`. It
+            // reaches here before the delta guard would drop it for having no delta.
+            if (isset($json['usage']) && \is_array($json['usage'])) {
+                $usage = $json['usage'];
+            }
+
             $delta = $json['choices'][0]['delta'] ?? null;
             if (!\is_array($delta)) {
                 return;
@@ -378,7 +395,8 @@ class LlmService implements LlmServiceInterface
         }
 
         try {
-            $request = $this->buildJsonRequest($this->uri('https://api.anthropic.com', '/v1/messages'), [
+            $anthropicUri = $this->uri('https://api.anthropic.com', '/v1/messages');
+            $request = $this->buildJsonRequest($anthropicUri, [
                 'x-api-key' => $this->apiKey,
                 'anthropic-version' => '2023-06-01',
                 'content-type' => 'application/json',
@@ -425,6 +443,8 @@ class LlmService implements LlmServiceInterface
             if (!empty($toolCalls)) {
                 $message['tool_calls'] = $toolCalls;
             }
+
+            $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
 
             return $message;
 
@@ -494,6 +514,88 @@ class LlmService implements LlmServiceInterface
     private function uri(string $porDefecto, string $ruta): string
     {
         return ($this->baseUrl ?? $porDefecto) . $ruta;
+    }
+
+    /**
+     * Reports one call's cost to a return-aware observer, once — and only what the provider spoke.
+     *
+     * Silent when nobody opted into {@see ReturnObserver} or the provider reported no usage: a return
+     * this seam cannot substantiate is not one it invents. The observer contract forbids throwing,
+     * but a broken implementation must not take the run down with it either, so this stays defensive.
+     *
+     * @param array<string, mixed>|null $rawUsage The provider's own usage block, unnormalized.
+     */
+    private function emitReturn(string $uri, ?array $rawUsage): void
+    {
+        if (!$this->channelObserver instanceof ReturnObserver) {
+            return;
+        }
+
+        $usage = $this->normalizeUsage($rawUsage);
+        if ($usage === null) {
+            return;
+        }
+
+        try {
+            $this->channelObserver->observeReturn($uri, ['model' => $this->model, 'usage' => $usage]);
+        } catch (\Throwable) {
+            // Observing a channel may not change it — and that includes not being able to fell it.
+        }
+    }
+
+    /**
+     * Collapses either provider's usage block to one shape, or `null` when neither is recognizable.
+     *
+     * OpenAI counts `prompt_tokens`/`completion_tokens`/`total_tokens` and nests any cache hit under
+     * `prompt_tokens_details.cached_tokens`; Anthropic counts `input_tokens`/`output_tokens` with no
+     * total and names its cache read `cache_read_input_tokens`. Both become
+     * `prompt_tokens`/`completion_tokens`/`total_tokens`, plus `cached_tokens` only when the provider
+     * declared one — an absent cache figure is «not said», never a fabricated zero. The total is
+     * taken as reported and only summed when the provider omitted it.
+     *
+     * @param array<string, mixed>|null $raw
+     *
+     * @return array{prompt_tokens: int, completion_tokens: int, total_tokens: int, cached_tokens?: int}|null
+     */
+    private function normalizeUsage(?array $raw): ?array
+    {
+        if ($raw === null) {
+            return null;
+        }
+
+        if (isset($raw['prompt_tokens']) || isset($raw['completion_tokens'])) {
+            $prompt = (int) ($raw['prompt_tokens'] ?? 0);
+            $completion = (int) ($raw['completion_tokens'] ?? 0);
+            $usage = [
+                'prompt_tokens' => $prompt,
+                'completion_tokens' => $completion,
+                'total_tokens' => (int) ($raw['total_tokens'] ?? ($prompt + $completion)),
+            ];
+            $cached = $raw['prompt_tokens_details']['cached_tokens'] ?? null;
+            if (\is_int($cached)) {
+                $usage['cached_tokens'] = $cached;
+            }
+
+            return $usage;
+        }
+
+        if (isset($raw['input_tokens']) || isset($raw['output_tokens'])) {
+            $prompt = (int) ($raw['input_tokens'] ?? 0);
+            $completion = (int) ($raw['output_tokens'] ?? 0);
+            $usage = [
+                'prompt_tokens' => $prompt,
+                'completion_tokens' => $completion,
+                'total_tokens' => $prompt + $completion,
+            ];
+            $cached = $raw['cache_read_input_tokens'] ?? null;
+            if (\is_int($cached)) {
+                $usage['cached_tokens'] = $cached;
+            }
+
+            return $usage;
+        }
+
+        return null;
     }
 
     /**
