@@ -199,8 +199,10 @@ class LlmService implements LlmServiceInterface
                 $this->assertSuccessStatus($response, 'OpenAI');
 
                 $streamUsage = null;
+                $streamUri = $this->uri('https://api.openai.com', '/v1/chat/completions');
                 $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage);
-                $this->emitReturn($this->uri('https://api.openai.com', '/v1/chat/completions'), $streamUsage);
+                $this->emitReturn($streamUri, $streamUsage);
+                $this->emitReasoning($streamUri, $streamMessage);
 
                 return $streamMessage;
             } catch (\Throwable $e) {
@@ -223,8 +225,10 @@ class LlmService implements LlmServiceInterface
 
             $body = json_decode((string) $response->getBody(), true);
             $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+            $message = \is_array($body) ? ($body['choices'][0]['message'] ?? []) : [];
+            $this->emitReasoning($openAiUri, \is_array($message) ? $message : []);
 
-            return \is_array($body) ? ($body['choices'][0]['message'] ?? []) : [];
+            return \is_array($message) ? $message : [];
 
         } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
@@ -247,11 +251,12 @@ class LlmService implements LlmServiceInterface
     {
         $usage = null;
         $content = '';
+        $reasoning = '';
         /** @var array<int, array{id: string, type: string, function: array{name: string, arguments: string}}> $toolCalls */
         $toolCalls = [];
         $buffer = '';
 
-        $handle = static function (string $line) use (&$content, &$toolCalls, &$usage, $onChunk): void {
+        $handle = static function (string $line) use (&$content, &$reasoning, &$toolCalls, &$usage, $onChunk): void {
             if (!str_starts_with($line, 'data:')) {
                 return; // comments (':' keep-alive) and blank separators
             }
@@ -276,6 +281,9 @@ class LlmService implements LlmServiceInterface
             }
 
             $fired = false;
+            if (isset($delta['reasoning_content']) && \is_string($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
+                $reasoning .= $delta['reasoning_content'];
+            }
             if (isset($delta['content']) && \is_string($delta['content']) && $delta['content'] !== '') {
                 $content .= $delta['content'];
                 $onChunk($delta['content']);
@@ -318,6 +326,9 @@ class LlmService implements LlmServiceInterface
         $message = ['role' => 'assistant', 'content' => $content];
         if ($toolCalls !== []) {
             $message['tool_calls'] = array_values($toolCalls);
+        }
+        if ($reasoning !== '') {
+            $message['reasoning_content'] = $reasoning;
         }
 
         return $message;
@@ -538,6 +549,34 @@ class LlmService implements LlmServiceInterface
 
         try {
             $this->channelObserver->observeReturn($uri, ['model' => $this->model, 'usage' => $usage]);
+        } catch (\Throwable) {
+            // Observing a channel may not change it — and that includes not being able to fell it.
+        }
+    }
+
+    /**
+     * Reports one call's reasoning to a reasoning-aware observer, once — and only what the provider spoke.
+     *
+     * Silent when nobody opted into {@see ReasoningObserver} or the message carries no `reasoning_content`:
+     * a model that reasons silently produces no call here, never an empty one. The observer contract forbids
+     * throwing, but a broken implementation must not take the run down with it either, so this stays defensive.
+     *
+     * @param array<string, mixed> $message The decoded assistant message, which on a reasoning model carries
+     *                                      `reasoning_content` alongside `content`/`tool_calls`.
+     */
+    private function emitReasoning(string $uri, array $message): void
+    {
+        if (!$this->channelObserver instanceof ReasoningObserver) {
+            return;
+        }
+
+        $reasoning = $message['reasoning_content'] ?? null;
+        if (!\is_string($reasoning) || $reasoning === '') {
+            return;
+        }
+
+        try {
+            $this->channelObserver->observeReasoning($uri, $reasoning);
         } catch (\Throwable) {
             // Observing a channel may not change it — and that includes not being able to fell it.
         }
