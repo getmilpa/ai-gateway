@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/getmilpa/ai-gateway/compare/v0.13.0...v0.14.0) (2026-08-30)
+
+
+### Features
+
+* publish what a model call reasoned via an optional ReasoningObserver seam ([#32](https://github.com/getmilpa/ai-gateway/issues/32)) ([dd98be6](https://github.com/getmilpa/ai-gateway/commit/dd98be6422a61f1dbfc4c0b04a8c5badb6e7f1a0))
+
 ## [0.13.0](https://github.com/getmilpa/ai-gateway/compare/v0.12.0...v0.13.0) (2026-08-30)
 
 
