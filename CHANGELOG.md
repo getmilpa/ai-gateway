@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/getmilpa/ai-gateway/compare/v0.12.0...v0.13.0) (2026-08-30)
+
+
+### Features
+
+* a lazy toolbox — tools arrive by name and description, schemas on demand (opt-in) ([#30](https://github.com/getmilpa/ai-gateway/issues/30)) ([7f79f13](https://github.com/getmilpa/ai-gateway/commit/7f79f13c02f92b8e2ecab7a7fb121893923f7fe3))
+
 ## [0.12.0](https://github.com/getmilpa/ai-gateway/compare/v0.11.0...v0.12.0) (2026-08-28)
 
 
