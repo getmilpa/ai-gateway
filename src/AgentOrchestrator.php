@@ -44,13 +44,17 @@ class AgentOrchestrator
     private ?ToolContext $toolContext;
     private ?ToolResult $lastToolResult = null;
 
+    /** Whether the toolbox serves tool schemas on demand (small-window models) instead of inlining all. */
+    private bool $lazyTools;
+
     public function __construct(
         LlmService $llm,
         McpClientService $mcpClient,
         int $maxSteps = 20,
         ?LoggerInterface $logger = null,
         ?RendererRegistry $rendererRegistry = null,
-        ?PlanBoard $planBoard = null
+        ?PlanBoard $planBoard = null,
+        bool $lazyTools = false
     ) {
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
@@ -59,6 +63,7 @@ class AgentOrchestrator
         $this->rendererRegistry = $rendererRegistry;
         $this->planBoard = $planBoard;
         $this->toolContext = null;
+        $this->lazyTools = $lazyTools;
     }
 
     /**
@@ -130,6 +135,51 @@ class AgentOrchestrator
      * @param list<array<string, mixed>> $history      Conversation history
      * @param callable|null              $onStep       Optional callback called at each step: fn(int $step, string $status) => void
      */
+    /**
+     * Lean the catalogue for the toolbox: every tool becomes name + description with an empty schema,
+     * except the ones the model has already described (their full schema stays), plus a `describe_tool`
+     * meta-tool that serves any tool's schema on demand. This is what keeps 43 full schemas off every
+     * request — the model pulls the one it needs (greenhouse evidence/0436).
+     *
+     * @param list<array<string, mixed>> $full     the app's full tool summaries (name, description, inputSchema)
+     * @param list<string>               $unlocked names the model has described this run
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function lazyCatalogue(array $full, array $unlocked): array
+    {
+        $lean = [];
+        foreach ($full as $tool) {
+            $name = (string) ($tool['name'] ?? '');
+            if (in_array($name, $unlocked, true)) {
+                $lean[] = $tool;
+
+                continue;
+            }
+            $lean[] = [
+                'name' => $name,
+                'description' => (string) ($tool['description'] ?? ''),
+                'inputSchema' => ['type' => 'object', 'properties' => (object) []],
+            ];
+        }
+        $lean[] = [
+            'name' => 'describe_tool',
+            'description' => 'Return the full input schema of a tool by name. Call this before using a tool whose parameters you do not know.',
+            'inputSchema' => [
+                'type' => 'object',
+                'properties' => ['name' => ['type' => 'string', 'description' => 'the tool to describe']],
+                'required' => ['name'],
+            ],
+        ];
+
+        return $lean;
+    }
+
+    /**
+     * Drive the agent loop until it returns a final answer or pauses on a gate.
+     *
+     * @param list<array<string, mixed>> $history prior turns, each a role/content message
+     */
     public function run(string $prompt, string $systemPrompt = 'You are a helpful assistant.', array $history = [], ?callable $onStep = null): string
     {
         // Track tool results to append them to final response
@@ -143,6 +193,15 @@ class AgentOrchestrator
             $history = []; // Clear history
             $this->log("⚠️ FORCE REFRESH: History cleared, forcing tool usage.");
             $systemPrompt .= " IMPORTANT: You must use tools to answer this request to ensure up-to-date data. Do not rely on previous context.";
+        }
+
+        // The toolbox: tools arrive as name + description only, so 43 full schemas do not ride every
+        // request. The model asks for a tool's parameters on demand, and a tool it touches without its
+        // schema is auto-described (the system resolves it) rather than failing.
+        if ($this->lazyTools) {
+            $systemPrompt .= "\n\nTOOLBOX: each tool is listed by name and description only. Before you call "
+                . "a tool whose parameters you do not know, call `describe_tool` with its name to get its "
+                . "input schema, then call the tool with the arguments the schema declares.";
         }
 
         // Build initial messages array: System -> History -> Current User Prompt
@@ -161,6 +220,10 @@ class AgentOrchestrator
 
         // Track used tools for footer
         $usedToolNames = [];
+
+        // The toolbox's memory: a tool stays lean (name + description) until the model describes it or
+        // touches it, then its full schema joins the table for the rest of the run (greenhouse evidence/0436).
+        $unlockedTools = [];
 
         for ($i = 0; $i < $this->maxSteps; $i++) {
             // Invoke onStep callback to refresh typing indicator or other status
@@ -189,7 +252,9 @@ class AgentOrchestrator
             // no se podía contestar, porque el mundo nunca cambiaba.
             //
             // No se le pregunta al agente si releyó. Se le da un mundo distinto.
-            $tools = $this->mcpClient->getToolSummaries();
+            $tools = $this->lazyTools
+                ? $this->lazyCatalogue($this->mcpClient->getToolSummaries(), $unlockedTools)
+                : $this->mcpClient->getToolSummaries();
             $this->log("Step $i: tools on the table: " . count($tools) . " - " . implode(', ', array_column($tools, 'name')));
 
             // EL PLAN SE REPROYECTA EN CADA PASO, POR LA MISMA RAZÓN QUE LA MESA.
@@ -249,6 +314,41 @@ class AgentOrchestrator
 
                     $argsJson = json_encode($functionArgs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     $this->log("Step $i: 🔧 EXECUTING tool='$functionName' args=$argsJson");
+
+                    // The toolbox door: `describe_tool` returns a tool's schema on demand, and a tool the
+                    // model touches without having described it is auto-described here (the system resolves
+                    // the schema) instead of executing with arguments the model could not have known. Either
+                    // way the tool is unlocked, so its full schema is on the table from the next step.
+                    $describing = $functionName === 'describe_tool';
+                    if ($this->lazyTools && ($describing || !in_array($functionName, $unlockedTools, true))) {
+                        $wanted = $describing
+                            ? (is_array($functionArgs) ? (string) ($functionArgs['name'] ?? '') : '')
+                            : $functionName;
+                        $schema = null;
+                        foreach ($this->mcpClient->getToolSummaries() as $summary) {
+                            if ($summary['name'] === $wanted) {
+                                $schema = $summary['inputSchema'];
+
+                                break;
+                            }
+                        }
+                        if ($schema === null) {
+                            $output = json_encode(['error' => "no tool named «{$wanted}» — use the exact name shown"], JSON_UNESCAPED_UNICODE);
+                        } else {
+                            if (!in_array($wanted, $unlockedTools, true)) {
+                                $unlockedTools[] = $wanted;
+                            }
+                            $output = json_encode([
+                                'tool' => $wanted,
+                                'inputSchema' => $schema,
+                                'note' => "now call {$wanted} with the arguments this schema declares",
+                            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                            $this->log("Step $i: 📖 described + unlocked '$wanted'");
+                        }
+                        $messages[] = ['role' => 'tool', 'tool_call_id' => $toolCall['id'], 'name' => $functionName, 'content' => $output];
+
+                        continue;
+                    }
 
                     // 3. Execute Tool
                     try {
