@@ -870,4 +870,31 @@ class AgentOrchestratorTest extends TestCase
 
         return $vistos;
     }
+    /**
+     * The toolbox (opt-in): tools arrive lean, the model describes one to get its schema, then calls it.
+     * The describe is intercepted (never a real tool call); the tool executes once, after it is unlocked
+     * (greenhouse evidence/0436).
+     */
+    public function testTheToolboxServesSchemasOnDemand(): void
+    {
+        $orchestrator = new AgentOrchestrator($this->llmService, $this->mcpClient, 10, $this->logger, null, null, true);
+
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'get_time', 'description' => 'Get current time', 'inputSchema' => ['type' => 'object', 'properties' => ['tz' => ['type' => 'string']]]],
+        ]);
+        $this->mcpClient->expects($this->once())->method('callTool')
+            ->with('get_time', [])
+            ->willReturn('12:00 PM');
+
+        $this->llmService->expects($this->exactly(3))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(
+                ['role' => 'assistant', 'content' => '', 'tool_calls' => [['id' => 'd1', 'type' => 'function', 'function' => ['name' => 'describe_tool', 'arguments' => '{"name":"get_time"}']]]],
+                ['role' => 'assistant', 'content' => '', 'tool_calls' => [['id' => 'c1', 'type' => 'function', 'function' => ['name' => 'get_time', 'arguments' => '{}']]]],
+                ['role' => 'assistant', 'content' => 'It is 12:00 PM.'],
+            );
+
+        $result = $orchestrator->run('What time is it?');
+        $this->assertStringContainsString('12:00 PM', $result);
+    }
 }
