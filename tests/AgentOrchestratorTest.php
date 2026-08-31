@@ -130,6 +130,60 @@ class AgentOrchestratorTest extends TestCase
         $this->assertEquals('🔧 The current time is 12:00 PM.', $result);
     }
 
+    /**
+     * A pathological tool result (a self-inspection dump measured at ~53K tokens, greenhouse
+     * evidence/0440) must be BOUNDED before it returns to the model inside the turn — otherwise it
+     * overflows a small-window model in one step, before any history compaction applies. The head is
+     * kept, the tail is elided with an honest marker. The existing small-result tests are the
+     * negative control: if the bound touched a normal result, they would fail.
+     */
+    public function testABigToolResultIsBoundedBeforeItReturnsToTheModel(): void
+    {
+        $tools = [
+            ['name' => 'observe', 'description' => 'dump the whole session', 'inputSchema' => []],
+        ];
+        $this->mcpClient->method('getToolSummaries')->willReturn($tools);
+
+        $huge = str_repeat('X', 60000);
+        $this->mcpClient->method('callTool')->with('observe', [])->willReturn($huge);
+
+        $captured = [];
+        $call = 0;
+        $this->llmService->method('generateResponse')
+            ->willReturnCallback(function ($prompt, $tools, $messages, $maxTokens) use (&$captured, &$call) {
+                $captured[] = $messages;
+                ++$call;
+                if ($call === 1) {
+                    return [
+                        'role' => 'assistant',
+                        'content' => '',
+                        'tool_calls' => [
+                            ['id' => 'c1', 'type' => 'function', 'function' => ['name' => 'observe', 'arguments' => '{}']],
+                        ],
+                    ];
+                }
+
+                return ['role' => 'assistant', 'content' => 'done'];
+            });
+
+        $this->orchestrator->run('inspect');
+
+        // The SECOND model call carried the tool result. It must be bounded — never the full 60000-char
+        // dump — and it must SAY it was cut rather than truncate silently.
+        $this->assertArrayHasKey(1, $captured, 'the model was called again after the tool ran');
+        $toolMsg = null;
+        foreach ($captured[1] as $m) {
+            if (($m['role'] ?? '') === 'tool') {
+                $toolMsg = $m;
+            }
+        }
+        $this->assertNotNull($toolMsg, 'the tool result was fed back to the model');
+        $this->assertLessThan(9000, mb_strlen($toolMsg['content']), 'the 60000-char dump was bounded');
+        $this->assertStringStartsWith('XXXX', $toolMsg['content'], 'the head of the result is kept');
+        $this->assertStringContainsString('truncated', $toolMsg['content']);
+        $this->assertStringContainsString('elided', $toolMsg['content']);
+    }
+
     public function testRunWithMultipleToolCalls(): void
     {
         $tools = [
