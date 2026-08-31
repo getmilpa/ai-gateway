@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/getmilpa/ai-gateway/compare/v0.14.0...v0.14.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **orchestrator:** bound each tool result to the model window in the inner loop ([#34](https://github.com/getmilpa/ai-gateway/issues/34)) ([a9bfc79](https://github.com/getmilpa/ai-gateway/commit/a9bfc79d312e0349d33607c282a1044466d86054))
+
 ## [0.14.0](https://github.com/getmilpa/ai-gateway/compare/v0.13.0...v0.14.0) (2026-08-30)
 
 
