@@ -35,6 +35,19 @@ class AgentOrchestrator
      */
     public const STEPS_EXHAUSTED = 'Error: Maximum agent steps reached.';
 
+    /**
+     * The per-result budget that a single tool result may contribute to the model's context inside
+     * ONE agentic turn — the inner-loop counterpart of `Session::MAX_TOOL_RESULT`, which bounds
+     * results only in the CROSS-TURN history. Without it, a self-inspection op that returns a large
+     * dump (`agent_observe` measured at ~53K tokens, greenhouse evidence/0440) is fed back verbatim
+     * and overflows a small-window model in a single step — before any history compaction can apply.
+     * The FULL result still reaches the session log through the channel observer; this bounds only
+     * what returns to the window (greenhouse decisions/0040: the window derives from consequence,
+     * not the raw). A generous default: big enough for a real file read or listing, small enough that
+     * no one result can dominate a 32K window. A window-derived budget is the follow-up.
+     */
+    private const MAX_TOOL_RESULT_CHARS = 8000;
+
     private LlmService $llm;
     private McpClientService $mcpClient;
     private int $maxSteps;
@@ -115,6 +128,26 @@ class AgentOrchestrator
         }
 
         return false;
+    }
+
+    /**
+     * Bound a single tool result to what may return to the model's window in one turn. Over the
+     * budget, the head is kept and the tail is elided with an honest marker naming how much was cut
+     * and where the whole result lives — never a silent truncation that would read as the full
+     * answer (greenhouse evidence/0440, decisions/0040). Multibyte-safe: it cuts on character
+     * boundaries so a truncated result is never a broken byte sequence.
+     */
+    private function boundToolResult(string $output): string
+    {
+        if (mb_strlen($output) <= self::MAX_TOOL_RESULT_CHARS) {
+            return $output;
+        }
+
+        $elided = mb_strlen($output) - self::MAX_TOOL_RESULT_CHARS;
+
+        return mb_substr($output, 0, self::MAX_TOOL_RESULT_CHARS)
+            . "\n…[tool result truncated: {$elided} characters elided to fit the model window;"
+            . ' the full result is in the session log]';
     }
 
     private function renderToolResult(ToolResult $result): string
@@ -431,12 +464,14 @@ class AgentOrchestrator
                         $this->log("Step $i: ❌ TOOL ERROR '$functionName': " . $e->getMessage());
                     }
 
-                    // 4. Feed result back
+                    // 4. Feed result back — BOUNDED to the model's window (evidence/0440). The full
+                    // result already reached the session log; what returns to the window is derived,
+                    // never the raw dump that would overflow a small-window model in one step.
                     $messages[] = [
                         'role' => 'tool',
                         'tool_call_id' => $toolCall['id'],
                         'name' => $functionName,
-                        'content' => $output,
+                        'content' => $this->boundToolResult($output),
                     ];
                 }
                 // Loop continues to let LLM process tool output
