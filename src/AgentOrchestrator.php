@@ -36,6 +36,30 @@ class AgentOrchestrator
     public const STEPS_EXHAUSTED = 'Error: Maximum agent steps reached.';
 
     /**
+     * What a leg returns when the forced choice was put in front of the model and the model chose
+     * none of its options — no tool call, no {@see self::HOUSE_DEBT_MARKER}, no
+     * {@see self::ABANDON_MARKER} (greenhouse decisions/0185).
+     *
+     * Like {@see self::STEPS_EXHAUSTED}, it is not an answer and must not be painted as one; it is
+     * public so a surface recognizes it without repeating the literal. The line after the sentinel
+     * carries the probe's receipt as JSON, so the caller can surface WHY the leg ended instead of
+     * re-deriving it.
+     */
+    public const PROGRESS_STALLED = 'Error: Agent progress stalled.';
+
+    /**
+     * The marker a post-notice answer starts with to declare framework-owned debt and end the leg —
+     * the content returns verbatim, and the CALLER records the debt (option B of the forced choice).
+     */
+    public const HOUSE_DEBT_MARKER = 'HOUSE_DEBT:';
+
+    /**
+     * The marker a post-notice answer starts with to drop the current hypothesis and keep working —
+     * the turn stays in history and the loop continues (option D of the forced choice).
+     */
+    public const ABANDON_MARKER = 'ABANDON:';
+
+    /**
      * The per-result budget that a single tool result may contribute to the model's context inside
      * ONE agentic turn — the inner-loop counterpart of `Session::MAX_TOOL_RESULT`, which bounds
      * results only in the CROSS-TURN history. Without it, a self-inspection op that returns a large
@@ -83,6 +107,9 @@ class AgentOrchestrator
     /** Whether the toolbox serves tool schemas on demand (small-window models) instead of inlining all. */
     private bool $lazyTools;
 
+    /** The caller's semantic-progress observer, or `null` for the byte-identical default path. */
+    private ?ProgressProbe $progressProbe;
+
     public function __construct(
         LlmService $llm,
         McpClientService $mcpClient,
@@ -90,7 +117,8 @@ class AgentOrchestrator
         ?LoggerInterface $logger = null,
         ?RendererRegistry $rendererRegistry = null,
         ?PlanBoard $planBoard = null,
-        bool $lazyTools = false
+        bool $lazyTools = false,
+        ?ProgressProbe $progressProbe = null
     ) {
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
@@ -100,6 +128,7 @@ class AgentOrchestrator
         $this->planBoard = $planBoard;
         $this->toolContext = null;
         $this->lazyTools = $lazyTools;
+        $this->progressProbe = $progressProbe;
     }
 
     /**
@@ -198,6 +227,38 @@ class AgentOrchestrator
         return mb_substr($output, 0, self::MAX_TOOL_RESULT_CHARS)
             . "\n…[tool result truncated: {$elided} characters elided to fit the model window;"
             . ' the full result is in the session log]';
+    }
+
+    /**
+     * Asks the probe whether the completed step left the run stalled, normalizing its answer to
+     * the notice-and-receipt pair the loop carries — or `null` when there is no probe, no opinion,
+     * no stall, or no usable notice.
+     *
+     * A probe is an OBSERVATION channel, and an observation must never break the observed run: a
+     * probe that throws is logged and treated as silence, the same doctrine the step callback
+     * already follows.
+     *
+     * @return array{notice: string, receipt: array<string, mixed>}|null
+     */
+    private function consultProgressProbe(int $step): ?array
+    {
+        if ($this->progressProbe === null) {
+            return null;
+        }
+
+        try {
+            $answer = $this->progressProbe->afterStep($step);
+        } catch (\Throwable $e) {
+            $this->log("Step $step: progress probe failed ({$e->getMessage()}) — treated as no opinion");
+
+            return null;
+        }
+
+        if ($answer === null || $answer['stalled'] !== true || trim($answer['notice']) === '') {
+            return null;
+        }
+
+        return ['notice' => $answer['notice'], 'receipt' => $answer['receipt']];
     }
 
     private function renderToolResult(ToolResult $result): string
@@ -308,6 +369,12 @@ class AgentOrchestrator
         // touches it, then its full schema joins the table for the rest of the run (greenhouse evidence/0436).
         $unlockedTools = [];
 
+        // THE FORCED CHOICE'S STATE (greenhouse decisions/0185): when the probe answers stalled,
+        // the notice rides the NEXT call as one appended system line and the answer to it is held
+        // to the choice — act, declare debt, abandon, or the leg ends. `null` when nothing is due.
+        /** @var array{notice: string, receipt: array<string, mixed>}|null $pendingStall */
+        $pendingStall = null;
+
         for ($i = 0; $i < $this->maxSteps; $i++) {
             // Invoke onStep callback to refresh typing indicator or other status
             if ($onStep !== null) {
@@ -358,6 +425,18 @@ class AgentOrchestrator
             if ($plan !== null && trim($plan) !== '') {
                 $paraElModelo[] = ['role' => 'system', 'content' => $plan];
                 $this->log("Step $i: plan reprojected (" . \strlen($plan) . " bytes)");
+            }
+
+            // THE STALL NOTICE RIDES THIS CALL ONLY — one appended system line on the per-step
+            // copy, exactly like the plan above and NEVER accumulated into `$messages` (the plan's
+            // own non-accumulation doctrine): twenty notices in history would be nineteen stale
+            // verdicts about windows that already closed. `$noticeThisCall` remembers that THIS
+            // step's answer is the one held to the forced choice.
+            $noticeThisCall = $pendingStall;
+            $pendingStall = null;
+            if ($noticeThisCall !== null) {
+                $paraElModelo[] = ['role' => 'system', 'content' => $noticeThisCall['notice']];
+                $this->log("Step $i: stall notice injected — the next answer faces the forced choice");
             }
 
             // 1. Ask LLM
@@ -524,12 +603,59 @@ class AgentOrchestrator
                         'content' => $this->boundToolResult($output),
                     ];
                 }
+
+                // A completed step: the probe measures what the stream can prove grew. A response
+                // WITH tool calls always proceeds — acting IS option A of the forced choice.
+                $pendingStall = $this->consultProgressProbe($i);
                 // Loop continues to let LLM process tool output
             } else {
                 // No tool call, final response
                 $this->log("Step $i: Final response (no tool calls)");
 
                 $finalResponse = $response['content'] ?? '';
+
+                // ── THE ENFORCEMENT OF THE FORCED CHOICE (greenhouse decisions/0185) ────────────
+                //
+                // The previous call carried the stall notice, and this answer produced no tool
+                // calls. The choice the notice worded leaves exactly three ways forward from here:
+                // declare the debt, abandon the hypothesis, or nothing — and «nothing» ends the
+                // leg. This runs BEFORE the degenerate-answer guard (0.15.0) on purpose, and the
+                // precedence is deliberate: post-notice, a degenerate answer is neither a tool
+                // call nor a marker, and the guard's retry would spend one more model call on
+                // exactly the thinking this enforcement exists to refuse. The two guards cannot
+                // interfere — the notice path returns or continues, so the retry only ever runs
+                // on answers no notice was holding to the choice.
+                if ($noticeThisCall !== null) {
+                    $declared = trim(\is_string($finalResponse) ? $finalResponse : '');
+
+                    if (str_starts_with($declared, self::HOUSE_DEBT_MARKER)) {
+                        // Option B: the debt is named. The content returns VERBATIM — no prefix,
+                        // no wrapper — because the caller records the debt from it.
+                        $this->log("Step $i: HOUSE_DEBT declared — the leg ends, the caller records it");
+
+                        return \is_string($finalResponse) ? $finalResponse : $declared;
+                    }
+
+                    if (str_starts_with($declared, self::ABANDON_MARKER)) {
+                        // Option D: the hypothesis is dropped, the work is not. The assistant turn
+                        // is already in `$messages`, where it belongs — history keeps what was
+                        // abandoned — and the loop continues under the same measurement.
+                        $this->log("Step $i: hypothesis abandoned — the loop continues");
+                        $pendingStall = $this->consultProgressProbe($i);
+
+                        continue;
+                    }
+
+                    // Option E — more prose about the work instead of the work — does not exist.
+                    // The leg ends as an honest stall, the receipt riding the answer so the
+                    // surface can show why.
+                    $this->log("Step $i: post-notice answer took none of the forced options — leg ends stalled");
+
+                    return self::PROGRESS_STALLED . "\n" . json_encode(
+                        ['receipt' => $noticeThisCall['receipt']],
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                    );
+                }
 
                 // ── A DEGENERATE ANSWER GETS ONE GUIDED RETRY ───────────────────────────────────
                 //
