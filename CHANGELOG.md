@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/getmilpa/ai-gateway/compare/v0.14.1...v0.15.0) (2026-09-01)
+
+
+### Features
+
+* transport retry-once and a degenerate-answer guard ([#36](https://github.com/getmilpa/ai-gateway/issues/36)) ([c55d0be](https://github.com/getmilpa/ai-gateway/commit/c55d0bee5ee2bebd5f6f4a8098ddc7ae3ce866b2))
+
 ## [0.14.1](https://github.com/getmilpa/ai-gateway/compare/v0.14.0...v0.14.1) (2026-08-31)
 
 
