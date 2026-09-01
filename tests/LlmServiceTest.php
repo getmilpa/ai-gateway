@@ -863,6 +863,132 @@ class LlmServiceTest extends TestCase
         self::assertArrayNotHasKey('stream', $enviado, 'sin callback no se pide streaming');
     }
 
+    // ========== Transport retry-once (greenhouse: three Desktop deaths in one day) ==========
+    //
+    // A live session died on a TRANSPORT blip mid-call — a connection hiccup to the model host
+    // surfaced as a dead stop, while the same session resumed fine seconds later. A transient
+    // transport failure is retried exactly once; an HTTP RESPONSE of any status is NOT transport
+    // and surfaces exactly as before — retrying a 400 context-exceeded is waste that masks truth.
+
+    public function testATransportFailureRetriesOnceAndTheAnswerCarriesTheRetryNote(): void
+    {
+        $ok = new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'choices' => [['message' => ['role' => 'assistant', 'content' => 'still here']]],
+        ]));
+        $client = new ScriptedHttpClient([self::networkFailure('connection reset by peer'), $ok]);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $client);
+
+        $message = $service->generateResponse('hola');
+
+        self::assertSame(2, $client->calls, 'one retry means exactly two attempts');
+        self::assertSame('still here', $message['content']);
+        self::assertTrue($message['transport_retried'] ?? false, 'the answer must note the retry so the caller can record honestly');
+    }
+
+    public function testATransportFailureOnBothAttemptsSurfacesAnErrorNamingTwoAttempts(): void
+    {
+        $client = new ScriptedHttpClient([
+            self::networkFailure('connection refused'),
+            self::networkFailure('connection refused'),
+            new Response(200, [], '{}'), // must never be reached: one retry, never a loop
+        ]);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $client);
+
+        try {
+            $service->generateResponse('hola');
+            $this->fail('Expected a RuntimeException after both transport attempts failed.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('OpenAI API Error', $e->getMessage());
+            $this->assertStringContainsString('2 attempts', $e->getMessage());
+            $this->assertStringContainsString('connection refused', $e->getMessage());
+        }
+
+        self::assertSame(2, $client->calls, 'exactly two attempts, never three');
+    }
+
+    public function testAnHttp400IsNeverRetriedAndSurfacesVerbatim(): void
+    {
+        // The control that distinguishes transport from response: a 400 (context-exceeded shape)
+        // is the provider speaking, not the wire failing. It must stay visible on the first try.
+        $body = (string) json_encode([
+            'error' => [
+                'message' => "This model's maximum context length is 32768 tokens.",
+                'code' => 'context_length_exceeded',
+            ],
+        ]);
+        $client = new ScriptedHttpClient([new Response(400, ['Content-Type' => 'application/json'], $body)]);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $client);
+
+        try {
+            $service->generateResponse('hola');
+            $this->fail('Expected a RuntimeException for the 400 response.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('OpenAI API Error', $e->getMessage());
+            $this->assertStringContainsString('400', $e->getMessage());
+            $this->assertStringContainsString('context_length_exceeded', $e->getMessage());
+        }
+
+        self::assertSame(1, $client->calls, 'an HTTP response is not transport: no retry');
+    }
+
+    public function testAnthropicTransportFailureAlsoRetriesOnce(): void
+    {
+        $ok = new Response(200, ['Content-Type' => 'application/json'], (string) json_encode([
+            'content' => [['type' => 'text', 'text' => 'still here']],
+        ]));
+        $client = new ScriptedHttpClient([self::networkFailure('name resolution failed'), $ok]);
+        $service = new LlmService('api-key', 'claude-3-sonnet', 'anthropic', httpClient: $client);
+
+        $message = $service->generateResponse('hola');
+
+        self::assertSame(2, $client->calls);
+        self::assertSame('still here', $message['content']);
+        self::assertTrue($message['transport_retried'] ?? false);
+    }
+
+    public function testAPlainClientExceptionIsNotATransportFailureAndIsNotRetried(): void
+    {
+        // PSR-18 reserves NetworkExceptionInterface for the wire; a generic client exception
+        // keeps today's shape: wrapped once, surfaced once, no second attempt.
+        $client = new ScriptedHttpClient([new FakeClientException('malformed request'), new Response(200, [], '{}')]);
+        $service = new LlmService('api-key', 'gpt-4o', 'openai', httpClient: $client);
+
+        try {
+            $service->generateResponse('hola');
+            $this->fail('Expected a RuntimeException.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('OpenAI API Error', $e->getMessage());
+        }
+
+        self::assertSame(1, $client->calls);
+    }
+
+    public function testTransportFailureClassificationMatchesTheClientsRealShapes(): void
+    {
+        // Anchor the classifier to the shapes today's client actually surfaces: Guzzle's
+        // ConnectException (refused/reset/timeout/DNS) is transport; any exception carrying
+        // an HTTP response is the provider speaking and must never be retried.
+        $service = new LlmService('api-key');
+        $method = new \ReflectionMethod($service, 'isTransportFailure');
+        $request = new \GuzzleHttp\Psr7\Request('POST', 'https://api.openai.com/v1/chat/completions');
+
+        self::assertTrue($method->invoke($service, new \GuzzleHttp\Exception\ConnectException('timeout', $request)));
+        self::assertTrue($method->invoke($service, self::networkFailure('reset')));
+        self::assertTrue($method->invoke($service, new \GuzzleHttp\Exception\TransferException('wire fell over')));
+        self::assertTrue($method->invoke($service, new \GuzzleHttp\Exception\RequestException('no response arrived', $request)));
+        self::assertFalse($method->invoke($service, new \GuzzleHttp\Exception\BadResponseException('400', $request, new Response(400))));
+        self::assertFalse($method->invoke($service, new FakeClientException('generic client error')));
+        self::assertFalse($method->invoke($service, new \RuntimeException('not a client exception at all')));
+    }
+
+    /** A PSR-18 network failure with the request PSR requires it to carry. */
+    private static function networkFailure(string $message): FakeNetworkException
+    {
+        return new FakeNetworkException(
+            $message,
+            new \GuzzleHttp\Psr7\Request('POST', 'https://api.openai.com/v1/chat/completions'),
+        );
+    }
 }
 
 /**
@@ -895,4 +1021,58 @@ final class FakeHttpClient implements ClientInterface
  */
 final class FakeClientException extends \RuntimeException implements ClientExceptionInterface
 {
+}
+
+/**
+ * Minimal PSR-18 NETWORK exception test double — the shape the wire failing surfaces as
+ * (connection refused/reset, timeout, DNS), as opposed to the provider answering with an error.
+ */
+final class FakeNetworkException extends \RuntimeException implements \Psr\Http\Client\NetworkExceptionInterface
+{
+    public function __construct(
+        string $message,
+        private readonly RequestInterface $request,
+    ) {
+        parent::__construct($message);
+    }
+
+    public function getRequest(): RequestInterface
+    {
+        return $this->request;
+    }
+}
+
+/**
+ * PSR-18 test double that plays a scripted sequence of results — a response is returned, a
+ * throwable is thrown — while counting every attempt, so a test can assert EXACTLY how many
+ * times the wire was tried.
+ */
+final class ScriptedHttpClient implements ClientInterface
+{
+    public int $calls = 0;
+
+    /** @var list<RequestInterface> */
+    public array $requests = [];
+
+    /** @param list<ResponseInterface|\Throwable> $script one entry per expected attempt, in order */
+    public function __construct(
+        private array $script,
+    ) {
+    }
+
+    public function sendRequest(RequestInterface $request): ResponseInterface
+    {
+        ++$this->calls;
+        $this->requests[] = $request;
+
+        $next = array_shift($this->script);
+        if ($next === null) {
+            throw new \LogicException('ScriptedHttpClient: more attempts than the script expected');
+        }
+        if ($next instanceof \Throwable) {
+            throw $next;
+        }
+
+        return $next;
+    }
 }

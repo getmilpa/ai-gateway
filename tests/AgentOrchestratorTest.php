@@ -951,4 +951,160 @@ class AgentOrchestratorTest extends TestCase
         $result = $orchestrator->run('What time is it?');
         $this->assertStringContainsString('12:00 PM', $result);
     }
+
+    // ========== Degenerate-answer guard (greenhouse: the SEQ-308 deaths) ==========
+    //
+    // Measured twice on a live session (qwen3.8-27b): the model spent its completion on
+    // reasoning (47591 chars the second time) and answered ONE token. The loop took that as the
+    // final answer — honest but useless, when one guided retry would likely have yielded the
+    // answer the model had ALREADY reasoned out. The guard fires only on the measured shape:
+    // near-empty content AND no tool calls AND large reasoning. One retry, never a third call.
+
+    /** The measured degenerate shape: huge reasoning, one-token answer, no tool calls. */
+    private static function seq308Response(): array
+    {
+        return [
+            'role' => 'assistant',
+            'content' => '🔧 ',
+            'reasoning_content' => str_repeat('r', 47591),
+        ];
+    }
+
+    public function testTheSeq308ShapeFiresTheGuardAndTheHealthyRetryAnswerStands(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $seen = [];
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnCallback(function (string $prompt, array $tools, array $messages) use (&$seen): array {
+                $seen[] = $messages;
+
+                return count($seen) === 1
+                    ? self::seq308Response()
+                    : ['role' => 'assistant', 'content' => 'The manifest lacks a version field; add one and reload.'];
+            });
+
+        $result = $this->orchestrator->run('Why did the plugin fail?');
+
+        $this->assertSame('The manifest lacks a version field; add one and reload.', $result);
+
+        // The guided retry is the SAME messages plus ONE appended system line telling the model
+        // to deliver the answer it already reasoned — nothing else about the call changes.
+        $this->assertCount(count($seen[0]) + 1, $seen[1]);
+        $this->assertSame($seen[0], array_slice($seen[1], 0, count($seen[0])));
+        $nudge = $seen[1][count($seen[1]) - 1];
+        $this->assertSame('system', $nudge['role']);
+        $this->assertStringContainsString('reasoned', $nudge['content']);
+    }
+
+    public function testARetryThatAlsoDegeneratesLeavesTheOriginalAnswerStandingAfterExactlyTwoCalls(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(self::seq308Response(), self::seq308Response());
+
+        $result = $this->orchestrator->run('Why did the plugin fail?');
+
+        // Degeneration is surfaced, not hidden: the original one-token answer stands as-is.
+        $this->assertSame('🔧 ', $result);
+    }
+
+    public function testAHealthyAnswerWithLargeReasoningNeverTriggersAnExtraCall(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $this->llmService->expects($this->once())
+            ->method('generateResponse')
+            ->willReturn([
+                'role' => 'assistant',
+                'content' => 'A long, substantive answer that carries the reasoning outcome.',
+                'reasoning_content' => str_repeat('r', 50000),
+            ]);
+
+        $result = $this->orchestrator->run('Explain.');
+
+        $this->assertSame('A long, substantive answer that carries the reasoning outcome.', $result);
+    }
+
+    public function testATerseButRealAnswerWithSmallReasoningIsNotDegenerate(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $this->llmService->expects($this->once())
+            ->method('generateResponse')
+            ->willReturn([
+                'role' => 'assistant',
+                'content' => 'Done.',
+                'reasoning_content' => 'short thought',
+            ]);
+
+        $result = $this->orchestrator->run('Do it.');
+
+        $this->assertSame('Done.', $result);
+    }
+
+    public function testAnEmptyAnswerWithNoReasoningIsNotDegenerate(): void
+    {
+        // A model that says nothing and reasoned nothing is not the measured failure shape;
+        // guessing a retry there would be inventing behavior. Byte-identical to before.
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $this->llmService->expects($this->once())
+            ->method('generateResponse')
+            ->willReturn(['role' => 'assistant', 'content' => '']);
+
+        $result = $this->orchestrator->run('Hello');
+
+        $this->assertSame('', $result);
+    }
+
+    public function testTheGuardNeverFiresWhenToolCallsArePresent(): void
+    {
+        // Empty content + huge reasoning + tool_calls is the model WORKING, not degenerating.
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'get_time', 'description' => 'Get current time', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->method('callTool')->willReturn('12:00 PM');
+
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(
+                [
+                    'role' => 'assistant',
+                    'content' => '',
+                    'reasoning_content' => str_repeat('r', 50000),
+                    'tool_calls' => [['id' => 'c1', 'type' => 'function', 'function' => ['name' => 'get_time', 'arguments' => '{}']]],
+                ],
+                ['role' => 'assistant', 'content' => 'It is 12:00 PM.'],
+            );
+
+        $result = $this->orchestrator->run('What time is it?');
+
+        $this->assertSame('🔧 It is 12:00 PM.', $result);
+    }
+
+    public function testAFailingGuidedRetryLeavesTheOriginalAnswerStandingInsteadOfKillingTheRun(): void
+    {
+        // The guard must never make things worse: if the retry call itself dies (transport,
+        // provider error), the degenerate-but-honest original answer still comes back.
+        $this->mcpClient->method('getToolSummaries')->willReturn([]);
+
+        $calls = 0;
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnCallback(function () use (&$calls): array {
+                if (++$calls === 1) {
+                    return self::seq308Response();
+                }
+
+                throw new \RuntimeException('OpenAI API Error: transport failed on 2 attempts');
+            });
+
+        $result = $this->orchestrator->run('Why did the plugin fail?');
+
+        $this->assertSame('🔧 ', $result);
+    }
 }
