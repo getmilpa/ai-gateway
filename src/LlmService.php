@@ -55,6 +55,14 @@ class LlmService implements LlmServiceInterface
      */
     private const MAX_ERROR_BODY_LENGTH = 500;
 
+    /**
+     * Backoff before the single transport retry, in microseconds (~2s). Long enough for a
+     * connection blip to the model host to pass, short enough that a surface watching the
+     * run reads it as a pause, not a death. There is deliberately no exponential machinery
+     * behind it: one retry, one backoff, then the truth surfaces.
+     */
+    private const TRANSPORT_RETRY_BACKOFF_MICROSECONDS = 2_000_000;
+
     private ClientInterface $httpClient;
     private RequestFactoryInterface $requestFactory;
     private StreamFactoryInterface $streamFactory;
@@ -191,10 +199,10 @@ class LlmService implements LlmServiceInterface
                 // antes de volver (su bolsa de opciones no viaja por PSR-18). El streaming vivo exige
                 // `GuzzleHttp\ClientInterface::send($req, ['stream' => true])`. Un cliente inyectado
                 // que no sea Guzzle (las pruebas) cae al `sendRequest` buffereado: el parser corre
-                // igual sobre el cuerpo ya descargado —correcto, sólo que no en vivo—.
-                $response = $this->httpClient instanceof \GuzzleHttp\ClientInterface
-                    ? $this->httpClient->send($request, ['stream' => true])
-                    : $this->httpClient->sendRequest($request);
+                // igual sobre el cuerpo ya descargado —correcto, sólo que no en vivo—. La división
+                // vive en `transmit()`, detrás del reintento de transporte.
+                $transportRetried = false;
+                $response = $this->sendWithTransportRetry($request, 'OpenAI', $transportRetried, stream: true);
 
                 $this->assertSuccessStatus($response, 'OpenAI');
 
@@ -204,7 +212,15 @@ class LlmService implements LlmServiceInterface
                 $this->emitReturn($streamUri, $streamUsage);
                 $this->emitReasoning($streamUri, $streamMessage);
 
+                if ($transportRetried) {
+                    $streamMessage['transport_retried'] = true;
+                }
+
                 return $streamMessage;
+            } catch (TransportRetryExhaustedException $e) {
+                // Already carries the provider prefix AND the attempt count; wrapping it again
+                // would stutter the prefix and bury the count.
+                throw $e;
             } catch (\Throwable $e) {
                 // `send()` lanza `GuzzleException`, que NO es `ClientExceptionInterface`; se atrapa
                 // ancho para conservar el contrato del mensaje que los llamadores esperan.
@@ -219,7 +235,8 @@ class LlmService implements LlmServiceInterface
                 'Content-Type' => 'application/json',
             ], $payload);
 
-            $response = $this->httpClient->sendRequest($request);
+            $transportRetried = false;
+            $response = $this->sendWithTransportRetry($request, 'OpenAI', $transportRetried);
 
             $this->assertSuccessStatus($response, 'OpenAI');
 
@@ -228,7 +245,14 @@ class LlmService implements LlmServiceInterface
             $message = \is_array($body) ? ($body['choices'][0]['message'] ?? []) : [];
             $this->emitReasoning($openAiUri, \is_array($message) ? $message : []);
 
-            return \is_array($message) ? $message : [];
+            if (!\is_array($message)) {
+                return [];
+            }
+            if ($transportRetried) {
+                $message['transport_retried'] = true;
+            }
+
+            return $message;
 
         } catch (ClientExceptionInterface $e) {
             throw new \RuntimeException("OpenAI API Error: " . $e->getMessage(), 0, $e);
@@ -413,7 +437,8 @@ class LlmService implements LlmServiceInterface
                 'content-type' => 'application/json',
             ], $payload);
 
-            $response = $this->httpClient->sendRequest($request);
+            $transportRetried = false;
+            $response = $this->sendWithTransportRetry($request, 'Anthropic', $transportRetried);
 
             $this->assertSuccessStatus($response, 'Anthropic');
 
@@ -454,6 +479,9 @@ class LlmService implements LlmServiceInterface
             if (!empty($toolCalls)) {
                 $message['tool_calls'] = $toolCalls;
             }
+            if ($transportRetried) {
+                $message['transport_retried'] = true;
+            }
 
             $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
 
@@ -493,6 +521,99 @@ class LlmService implements LlmServiceInterface
             $status,
             $this->truncateErrorBody((string) $response->getBody())
         ));
+    }
+
+    /**
+     * Put one request on the wire, honoring the streaming split {@see callOpenAi()} needs:
+     * live streaming requires Guzzle's own `send($request, ['stream' => true])` (PSR-18 has
+     * no options bag), and any other client falls back to the buffered `sendRequest()`.
+     */
+    private function transmit(RequestInterface $request, bool $stream): ResponseInterface
+    {
+        if ($stream && $this->httpClient instanceof \GuzzleHttp\ClientInterface) {
+            return $this->httpClient->send($request, ['stream' => true]);
+        }
+
+        return $this->httpClient->sendRequest($request);
+    }
+
+    /**
+     * Did this throwable happen on the WIRE, before any HTTP response existed?
+     *
+     * Only that shape is retryable: PSR-18 reserves {@see \Psr\Http\Client\NetworkExceptionInterface}
+     * for it, and Guzzle's default client surfaces connection refused/reset, timeout and DNS
+     * failures as `ConnectException` (which implements that interface). The streaming path's
+     * `send()` speaks Guzzle's own hierarchy, so a Guzzle exception that never carried a
+     * response counts too. Anything carrying an HTTP response — a `BadResponseException`, or
+     * the plain `ResponseInterface` the buffered path checks via {@see assertSuccessStatus()} —
+     * is the provider SPEAKING, not the wire failing, and is never classified as transport:
+     * retrying a 400 context-exceeded is waste that masks truth.
+     */
+    private function isTransportFailure(\Throwable $e): bool
+    {
+        if ($e instanceof \Psr\Http\Client\NetworkExceptionInterface) {
+            return true;
+        }
+        if ($e instanceof \GuzzleHttp\Exception\BadResponseException) {
+            return false; // an HTTP response arrived; its status is the provider's answer
+        }
+        if ($e instanceof \GuzzleHttp\Exception\RequestException) {
+            return $e->getResponse() === null;
+        }
+
+        return $e instanceof \GuzzleHttp\Exception\TransferException;
+    }
+
+    /**
+     * Send one request, retrying the SAME request exactly once after a short backoff when the
+     * first attempt failed at the TRANSPORT level — the measured Desktop death where a
+     * connection blip mid-call surfaced as a dead stop although the session resumed fine
+     * seconds later. `$retried` reports (out-param) whether the retry happened, so the caller
+     * can note it on the result and the record stays honest. Never more than one retry: both
+     * attempts failing raises {@see TransportRetryExhaustedException}, whose message names
+     * that two attempts were made. A non-transport throwable is rethrown untouched on either
+     * attempt, and an HTTP response of any status returns as-is for the caller's own status
+     * guard — this seam never eats a provider's answer.
+     *
+     * @param bool $retried out-param: true when the single transport retry was used
+     *
+     * @throws TransportRetryExhaustedException when both attempts fail at the transport level
+     */
+    private function sendWithTransportRetry(RequestInterface $request, string $provider, bool &$retried, bool $stream = false): ResponseInterface
+    {
+        $retried = false;
+
+        try {
+            return $this->transmit($request, $stream);
+        } catch (\Throwable $first) {
+            if (!$this->isTransportFailure($first)) {
+                throw $first;
+            }
+
+            $this->log("transport failure ({$first->getMessage()}), retrying once after backoff");
+            usleep(self::TRANSPORT_RETRY_BACKOFF_MICROSECONDS);
+
+            // The same request goes out again; a consumed body stream is rewound so the
+            // retry carries the same bytes, not an empty POST.
+            if ($request->getBody()->isSeekable()) {
+                $request->getBody()->rewind();
+            }
+            $retried = true;
+
+            try {
+                return $this->transmit($request, $stream);
+            } catch (\Throwable $second) {
+                if (!$this->isTransportFailure($second)) {
+                    throw $second;
+                }
+
+                throw new TransportRetryExhaustedException(sprintf(
+                    '%s API Error: transport failed on both of 2 attempts (one retry after a transient failure): %s',
+                    $provider,
+                    $second->getMessage()
+                ), 0, $second);
+            }
+        }
     }
 
     /**

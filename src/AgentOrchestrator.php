@@ -48,6 +48,29 @@ class AgentOrchestrator
      */
     private const MAX_TOOL_RESULT_CHARS = 8000;
 
+    /**
+     * A final answer whose TRIMMED content is shorter than this counts as no answer at all.
+     * Calibrated to the measured failure (the model answered one token, "🔧 ") while staying
+     * far below any legitimately terse reply a human would accept as an answer.
+     */
+    private const DEGENERATE_CONTENT_MIN_CHARS = 16;
+
+    /**
+     * The guard only fires when the model REASONED at least this many characters — proof the
+     * answer exists and was spent on reasoning instead of delivered. Measured: 47591 chars of
+     * reasoning against a one-token answer (greenhouse SEQ-308, twice in one session). A terse
+     * answer with little or no reasoning is a terse answer, not a degeneration.
+     */
+    private const DEGENERATE_REASONING_MIN_CHARS = 4000;
+
+    /**
+     * The one guided-retry instruction: the model already did the work — this asks it to hand
+     * the result over as content, and nothing else.
+     */
+    private const DEGENERATE_ANSWER_NUDGE = 'You have just reasoned through this request at length '
+        . 'but delivered an empty answer. State the answer you already reasoned out as plain message '
+        . 'content now — no further reasoning, no tool calls.';
+
     private LlmService $llm;
     private McpClientService $mcpClient;
     private int $maxSteps;
@@ -128,6 +151,33 @@ class AgentOrchestrator
         }
 
         return false;
+    }
+
+    /**
+     * Is this response the measured degeneration — the answer spent on reasoning, one token
+     * delivered? True only when ALL three hold: the trimmed content is shorter than
+     * {@see DEGENERATE_CONTENT_MIN_CHARS}, there are NO tool calls (a working model is not a
+     * degenerate one), and the reasoning ran to at least {@see DEGENERATE_REASONING_MIN_CHARS}
+     * (a model that reasoned little and said little is being terse, not failing). Anything
+     * that is not exactly this shape is left alone — a guard with false positives over normal
+     * behavior gets switched off within a week.
+     *
+     * @param array<string, mixed> $response the assistant message as {@see LlmService} returned it
+     */
+    private function isDegenerateAnswer(array $response): bool
+    {
+        if (!empty($response['tool_calls'])) {
+            return false;
+        }
+
+        $content = $response['content'] ?? '';
+        if (\is_string($content) && mb_strlen(trim($content)) >= self::DEGENERATE_CONTENT_MIN_CHARS) {
+            return false;
+        }
+
+        $reasoning = $response['reasoning_content'] ?? '';
+
+        return \is_string($reasoning) && mb_strlen($reasoning) >= self::DEGENERATE_REASONING_MIN_CHARS;
     }
 
     /**
@@ -480,6 +530,48 @@ class AgentOrchestrator
                 $this->log("Step $i: Final response (no tool calls)");
 
                 $finalResponse = $response['content'] ?? '';
+
+                // ── A DEGENERATE ANSWER GETS ONE GUIDED RETRY ───────────────────────────────────
+                //
+                // Measured twice on a live session (greenhouse, SEQ-308): the model spent its whole
+                // completion on reasoning (47591 chars the second time) and answered ONE token. The
+                // loop took that token as the final answer — honest, but useless, when the model had
+                // ALREADY reasoned out the real answer. The shape is unmistakable: near-empty
+                // content AND no tool calls AND large reasoning. On that shape — and only that
+                // shape — the same messages go out once more with one appended system line asking
+                // for the answer as content. A substantial retry stands; anything else leaves the
+                // original standing after exactly two calls, the degeneration surfaced in the log,
+                // never hidden. Both calls are real `LlmService` calls, visible to observers and
+                // telemetry exactly like any other.
+                if ($this->isDegenerateAnswer($response)) {
+                    $this->log(sprintf(
+                        'Step %d: degenerate answer (content=%d chars trimmed, reasoning=%d chars, no tool calls) — one guided retry',
+                        $i,
+                        mb_strlen(trim(\is_string($finalResponse) ? $finalResponse : '')),
+                        mb_strlen((string) ($response['reasoning_content'] ?? ''))
+                    ));
+
+                    $paraElReintento = $paraElModelo;
+                    $paraElReintento[] = ['role' => 'system', 'content' => self::DEGENERATE_ANSWER_NUDGE];
+
+                    try {
+                        $retry = $this->llm->generateResponse($prompt, $tools, $paraElReintento);
+                    } catch (\Throwable $e) {
+                        // The guard must never make things worse: a retry that dies leaves the
+                        // degenerate-but-honest original standing instead of killing the run.
+                        $this->log("Step $i: guided retry failed ({$e->getMessage()}) — the original answer stands");
+                        $retry = null;
+                    }
+
+                    $retryContent = \is_array($retry) ? ($retry['content'] ?? '') : '';
+                    if (\is_string($retryContent) && mb_strlen(trim($retryContent)) >= self::DEGENERATE_CONTENT_MIN_CHARS) {
+                        $this->log("Step $i: guided retry recovered a substantial answer");
+                        $messages[] = $retry;
+                        $finalResponse = $retryContent;
+                    } elseif ($retry !== null) {
+                        $this->log("Step $i: guided retry also degenerate — the original answer stands, degeneration surfaced");
+                    }
+                }
 
                 // ── UNA LLAMADA MAL FORMADA NO ES UNA RESPUESTA ─────────────────────────────────
                 //
