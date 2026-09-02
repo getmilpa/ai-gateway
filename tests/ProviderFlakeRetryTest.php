@@ -26,7 +26,7 @@ final class ProviderFlakeRetryTest extends TestCase
     private function serviceWith(array $queue, ?array &$sends = null): LlmService
     {
         $sends = [];
-        $client = new class($queue, $sends) implements ClientInterface {
+        $client = new class ($queue, $sends) implements ClientInterface {
             /** @param list<ResponseInterface> $queue */
             public function __construct(private array $queue, private array &$sends)
             {
