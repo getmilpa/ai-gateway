@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/getmilpa/ai-gateway/compare/v0.15.0...v0.16.0) (2026-09-02)
+
+
+### Features
+
+* the forced choice — a stalled probe ends option E (greenhouse decisions/0185) ([#38](https://github.com/getmilpa/ai-gateway/issues/38)) ([9943eb3](https://github.com/getmilpa/ai-gateway/commit/9943eb388f6906ae4dcd06d44235177c92949f02))
+
 ## [0.15.0](https://github.com/getmilpa/ai-gateway/compare/v0.14.1...v0.15.0) (2026-09-01)
 
 
