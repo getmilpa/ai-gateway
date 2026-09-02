@@ -94,6 +94,28 @@ class AgentOrchestrator
     private const ESTIMATED_CHARS_PER_TOKEN = 4;
 
     /**
+     * How many times ONE call may heal an exceed-context 400 before the error surfaces verbatim
+     * (honest surrender). Two is enough for a lying estimate plus a lying margin; more would be
+     * the loop arguing with the provider about arithmetic the provider settles.
+     */
+    private const MAX_CONTEXT_HEALS = 2;
+
+    /**
+     * The safety margin applied over the provider's measured overage when the leg budget shrinks:
+     * the overage says how far past the wall the request landed BY THE PROVIDER'S RULER, and the
+     * chars/4 estimate that overshot once will overshoot again, so the shrink overshoots the
+     * overage by this fraction to land the retry clear of the wall, not at it.
+     */
+    private const CONTEXT_HEAL_SAFETY_MARGIN = 0.15;
+
+    /**
+     * The conservative shrink used when the provider named NO numbers (an exceed-context body
+     * without `n_prompt_tokens`/`n_ctx`): a quarter of the working budget — deep enough that two
+     * bounded heals cover a badly lying estimate, never a fabricated «measured» overage.
+     */
+    private const CONTEXT_HEAL_FALLBACK_SHRINK_FRACTION = 0.25;
+
+    /**
      * A final answer whose TRIMMED content is shorter than this counts as no answer at all.
      * Calibrated to the measured failure (the model answered one token, "🔧 ") while staying
      * far below any legitimately terse reply a human would accept as an answer.
@@ -137,6 +159,15 @@ class AgentOrchestrator
      * {@see LEG_BUDGET_FRACTION} of it (greenhouse fixture series, run 8).
      */
     private int $contextTokens;
+
+    /**
+     * The LEG-STICKY budget a heal learned from the provider's own exceed-context numbers, in
+     * tokens — `0` until a heal happens. Reset at the start of every leg ({@see run()}): the
+     * provider taught the real estimate-to-token ratio once for THIS climb, so every later call
+     * of the leg projects under it instead of re-learning it per call; the next leg starts fresh
+     * from {@see LEG_BUDGET_FRACTION}.
+     */
+    private int $learnedLegBudgetTokens = 0;
 
     public function __construct(
         LlmService $llm,
@@ -278,16 +309,54 @@ class AgentOrchestrator
     }
 
     /**
+     * Estimate the token cost of the tools array that rides the SAME request as the messages —
+     * serialized chars over {@see ESTIMATED_CHARS_PER_TOKEN}, the ruler the projection estimate
+     * uses. The measured killer of run 12: 62 schemas (~10k+ tokens) rode outside the count, so
+     * the «bounded» request exceeded the window anyway. Schemas are the provider contract and
+     * are never elided; counting them just makes the budget honest — with fat schemas the
+     * message share tightens accordingly.
+     *
+     * @param list<array<string, mixed>> $tools the tool summaries about to ride the request
+     */
+    private function estimateToolsTokens(array $tools): int
+    {
+        if ($tools === []) {
+            return 0;
+        }
+
+        $encoded = json_encode($tools, JSON_UNESCAPED_UNICODE);
+
+        return intdiv(mb_strlen($encoded === false ? '' : $encoded), self::ESTIMATED_CHARS_PER_TOKEN);
+    }
+
+    /**
+     * The leg's working budget in tokens: what a heal learned from the provider's own numbers
+     * when one happened this leg ({@see learnedLegBudgetTokens}), else the declared default —
+     * {@see LEG_BUDGET_FRACTION} of the context window.
+     */
+    private function legBudget(): int
+    {
+        if ($this->learnedLegBudgetTokens > 0) {
+            return $this->learnedLegBudgetTokens;
+        }
+
+        return (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
+    }
+
+    /**
      * Bound ONE outgoing projection to the leg budget — the intra-leg counterpart of the
      * per-result {@see boundToolResult} (v0.14.1) and the between-legs WindowBudget: each step
      * appends its tool results, so within one leg the SUM climbs ~3k tokens per step into the
      * model's wall even with every single result bounded (greenhouse fixture series, run 8:
      * 21,917 → 31,536 of 32,768, leaving an 88-token completion).
      *
-     * While the estimate exceeds {@see LEG_BUDGET_FRACTION} of the declared context, the OLDEST
+     * The estimate covers the WHOLE request: messages PLUS the tools array that rides beside
+     * them ({@see estimateToolsTokens} — run 12's killer was the tools share outside the count).
+     * While messages + tools exceed the leg budget ({@see legBudget()} — the learned budget
+     * after a heal, else {@see LEG_BUDGET_FRACTION} of the declared context), the OLDEST
      * leg-internal tool-result content is replaced with a short stub naming the tool and how to
      * recover the value (the refetch doctrine). Nothing else is ever touched: the system prompt,
-     * user turns, assistant turns, the plan line, the stall notice and the newest
+     * user turns, assistant turns, the plan line, the stall notice, the schemas and the newest
      * {@see KEEP_RECENT_RESULTS} results ride in full, and no message is removed or re-rolled —
      * chat templates require every assistant `tool_calls` id to keep its tool message.
      *
@@ -295,18 +364,20 @@ class AgentOrchestrator
      * untouched, so the next call re-projects from full history against its own estimate.
      *
      * @param list<array<string, mixed>> $projection the per-call copy of the messages
+     * @param list<array<string, mixed>> $tools      the tool summaries riding the same request
      * @param int                        $step       the loop step, for the log line
      *
      * @return list<array<string, mixed>> the projection, elided only as far as the budget requires
      */
-    private function boundProjection(array $projection, int $step): array
+    private function boundProjection(array $projection, array $tools, int $step): array
     {
         if ($this->contextTokens <= 0) {
             return $projection;
         }
 
-        $budget = (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
-        if ($this->estimateProjectionTokens($projection) <= $budget) {
+        $budget = $this->legBudget();
+        $toolsTokens = $this->estimateToolsTokens($tools);
+        if ($this->estimateProjectionTokens($projection) + $toolsTokens <= $budget) {
             return $projection;
         }
 
@@ -323,7 +394,7 @@ class AgentOrchestrator
 
         $elidedTools = [];
         foreach ($elidible as $index) {
-            if ($this->estimateProjectionTokens($projection) <= $budget) {
+            if ($this->estimateProjectionTokens($projection) + $toolsTokens <= $budget) {
                 break;
             }
             $tool = (string) ($projection[$index]['name'] ?? 'the tool');
@@ -333,16 +404,107 @@ class AgentOrchestrator
 
         if ($elidedTools !== []) {
             $this->log(sprintf(
-                'Step %d: intra-leg budget (%d of %d tokens) elided %d tool result(s): %s',
+                'Step %d: intra-leg budget (%d of %d tokens, tools riding at ~%d) elided %d tool result(s): %s',
                 $step,
                 $budget,
                 $this->contextTokens,
+                $toolsTokens,
                 \count($elidedTools),
                 implode(', ', $elidedTools)
             ));
         }
 
         return $projection;
+    }
+
+    /**
+     * Heal an exceed-context 400 (greenhouse fixture run 12, Rod's ruling): the provider NAMED
+     * the overage, so the leg's working budget shrinks by that measured overage plus
+     * {@see CONTEXT_HEAL_SAFETY_MARGIN} — calibrated by the provider's own numbers, not
+     * re-guessed — the projection is rebuilt from FULL history under the smaller budget (the
+     * non-accumulation doctrine already re-projects per call), and the call retries. The learned
+     * budget is LEG-STICKY via {@see learnedLegBudgetTokens}: every later call of this leg
+     * projects under it without further heals.
+     *
+     * Bounded and honest: at most {@see MAX_CONTEXT_HEALS} healing retries per call — a
+     * protected set alone too big cannot be elided smaller, and past the bound the provider's
+     * verbatim error surfaces (honest surrender). Never entered without a budget to shrink:
+     * {@see run()} rethrows immediately when `contextTokens` is 0, keeping today's behavior for
+     * unbudgeted callers. Every heal is logged, and the healed message carries
+     * `context_healed: true` additively, like the transport and flake retry notes.
+     *
+     * @param ContextExceededException   $error            the failure that triggered the heal
+     * @param string                     $prompt           the leg's prompt, passed through unchanged
+     * @param list<array<string, mixed>> $failedProjection the bounded projection the provider rejected
+     * @param list<array<string, mixed>> $tools            the tool summaries riding every attempt
+     * @param list<array<string, mixed>> $unbounded        the full per-call projection, before any bound
+     * @param int                        $step             the loop step, for the log lines
+     *
+     * @return array{array<string, mixed>, list<array<string, mixed>>} the healed response and the
+     *                                                                 projection it went out with
+     *
+     * @throws ContextExceededException when the bounded heals are spent and the call still exceeds
+     */
+    private function healContextOverflow(ContextExceededException $error, string $prompt, array $failedProjection, array $tools, array $unbounded, int $step): array
+    {
+        for ($heal = 1; $heal <= self::MAX_CONTEXT_HEALS; ++$heal) {
+            $this->learnedLegBudgetTokens = $this->learnBudgetFrom($error, $failedProjection, $tools);
+            $this->log(sprintf(
+                'Step %d: context heal %d of %d — provider measured %s of %s tokens; leg budget shrunk to %d (leg-sticky)',
+                $step,
+                $heal,
+                self::MAX_CONTEXT_HEALS,
+                $error->nPromptTokens ?? '(unsaid)',
+                $error->nCtx ?? '(unsaid)',
+                $this->learnedLegBudgetTokens
+            ));
+
+            $failedProjection = $this->boundProjection($unbounded, $tools, $step);
+
+            try {
+                $response = $this->llm->generateResponse($prompt, $tools, $failedProjection);
+                // Noted ADDITIVELY on the healed message, like transport_retried — the record
+                // stays honest about what it took to land this answer.
+                $response['context_healed'] = true;
+
+                return [$response, $failedProjection];
+            } catch (ContextExceededException $e) {
+                $error = $e;
+            }
+        }
+
+        $this->log("Step $step: context heals exhausted — the provider's error surfaces verbatim (honest surrender)");
+
+        throw $error;
+    }
+
+    /**
+     * The smaller leg budget one exceed-context answer teaches, in tokens. The base is what the
+     * REJECTED request measured by this class's own ruler (its projection + tools estimate,
+     * capped at the current budget — the provider judged that request, not the abstract budget);
+     * from it the provider's measured overage (`n_prompt_tokens - n_ctx`) shrinks the budget,
+     * inflated by {@see CONTEXT_HEAL_SAFETY_MARGIN} because the estimate that landed over the
+     * wall once will land over it again. When the provider named no usable numbers, the shrink
+     * falls back to {@see CONTEXT_HEAL_FALLBACK_SHRINK_FRACTION} of the base — conservative,
+     * never fabricated. Floored at one token so elision under it stays maximal instead of
+     * dividing by a nonsense budget.
+     *
+     * @param ContextExceededException   $error            the provider's answer, numbers and all
+     * @param list<array<string, mixed>> $failedProjection the rejected projection
+     * @param list<array<string, mixed>> $tools            the tools that rode with it
+     */
+    private function learnBudgetFrom(ContextExceededException $error, array $failedProjection, array $tools): int
+    {
+        $measured = $this->estimateProjectionTokens($failedProjection) + $this->estimateToolsTokens($tools);
+        $base = min($this->legBudget(), $measured);
+
+        if ($error->nPromptTokens !== null && $error->nCtx !== null && $error->nPromptTokens > $error->nCtx) {
+            $shrink = (int) ceil(($error->nPromptTokens - $error->nCtx) * (1 + self::CONTEXT_HEAL_SAFETY_MARGIN));
+        } else {
+            $shrink = (int) ceil($base * self::CONTEXT_HEAL_FALLBACK_SHRINK_FRACTION);
+        }
+
+        return max(1, $base - $shrink);
     }
 
     /**
@@ -444,6 +606,10 @@ class AgentOrchestrator
     {
         // Track tool results to append them to final response
         $toolResults = [];
+
+        // A learned budget is LEG-sticky, not instance-sticky: this leg starts from the declared
+        // default, and only its own heals may shrink it.
+        $this->learnedLegBudgetTokens = 0;
 
         // Check for /force command to bypass history
         $forceRefresh = false;
@@ -561,12 +727,27 @@ class AgentOrchestrator
 
             // THE INTRA-LEG BUDGET GOVERNS THIS CALL'S PROJECTION ONLY (greenhouse fixture
             // series, run 8): with a declared context, the oldest leg-internal tool results are
-            // elided until the outgoing estimate fits the leg budget. `$messages` stays
-            // untouched — the next call re-projects from full history, like the plan above.
-            $paraElModelo = $this->boundProjection($paraElModelo, $i);
+            // elided until the outgoing estimate — messages PLUS the tools share (run 12) — fits
+            // the leg budget. `$messages` stays untouched — the next call re-projects from full
+            // history, like the plan above. The unbounded copy is kept for the heal below, which
+            // re-projects from it under a smaller budget.
+            $sinAcotar = $paraElModelo;
+            $paraElModelo = $this->boundProjection($paraElModelo, $tools, $i);
 
-            // 1. Ask LLM
-            $response = $this->llm->generateResponse($prompt, $tools, $paraElModelo);
+            // 1. Ask LLM. The exceed-context 400 is the ONE 4xx with a governed response — and
+            // only when a budget exists to shrink (run 12, Rod's ruling): the provider named the
+            // overage, so the leg heals itself instead of dying. An unbudgeted caller, and every
+            // other failure, keeps surfacing exactly as before.
+            try {
+                $response = $this->llm->generateResponse($prompt, $tools, $paraElModelo);
+            } catch (ContextExceededException $overflow) {
+                if ($this->contextTokens <= 0) {
+                    // Healing without a budget to shrink would be guesswork — today's verbatim
+                    // error stands for unbudgeted callers.
+                    throw $overflow;
+                }
+                [$response, $paraElModelo] = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
+            }
             $this->log("Step $i: LLM response - role=" . ($response['role'] ?? 'unknown') .
                 ", has_content=" . (!empty($response['content']) ? 'yes' : 'no') .
                 ", has_tool_calls=" . (isset($response['tool_calls']) ? count($response['tool_calls']) : '0'));
