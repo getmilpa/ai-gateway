@@ -57,9 +57,27 @@ final class ProviderFlakeRetryTest extends TestCase
         self::assertTrue($message['provider_flake_retried'] ?? false, 'the record notes the retry');
     }
 
-    public function testASecondFlakeIsFinalAtTwoSendsNeverThree(): void
+    public function testASecondFlakeRetriesAgainAndTheThirdAnswerStands(): void
+    {
+        $ok = new Response(200, [], (string) json_encode([
+            'choices' => [['message' => ['role' => 'assistant', 'content' => 'al fin']]],
+        ]));
+        $service = $this->serviceWith([
+            new Response(500, [], self::FLAKE_BODY),
+            new Response(500, [], self::FLAKE_BODY),
+            $ok,
+        ], $sends);
+
+        $message = $service->generateResponse('p', [], []);
+
+        self::assertCount(3, $sends, 'two retries — double flakes were measured live twice');
+        self::assertSame('al fin', $message['content']);
+    }
+
+    public function testAThirdFlakeIsFinalAtThreeSendsNeverFour(): void
     {
         $service = $this->serviceWith([
+            new Response(500, [], self::FLAKE_BODY),
             new Response(500, [], self::FLAKE_BODY),
             new Response(500, [], self::FLAKE_BODY),
             new Response(200, [], '{}'),
@@ -67,12 +85,12 @@ final class ProviderFlakeRetryTest extends TestCase
 
         try {
             $service->generateResponse('p', [], []);
-            self::fail('a second flake must be final');
+            self::fail('a third flake must be final');
         } catch (\RuntimeException $e) {
             self::assertStringContainsString('OpenAI API Error: HTTP 500', $e->getMessage());
             self::assertStringContainsString('Failed to parse tool call arguments', $e->getMessage());
         }
-        self::assertCount(2, $sends, 'never a third attempt');
+        self::assertCount(3, $sends, 'never a fourth attempt');
     }
 
     public function testAGenericFive00IsFinalOnTheFirstAnswer(): void
