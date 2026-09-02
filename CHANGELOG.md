@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/getmilpa/ai-gateway/compare/v0.16.1...v0.17.0) (2026-09-02)
+
+
+### Features
+
+* the intra-leg budget — each call's projection bounded to the declared context ([#42](https://github.com/getmilpa/ai-gateway/issues/42)) ([fc18e8d](https://github.com/getmilpa/ai-gateway/commit/fc18e8da61f826abef229dafaa9e79ced47cec8e))
+
 ## [0.16.1](https://github.com/getmilpa/ai-gateway/compare/v0.16.0...v0.16.1) (2026-09-02)
 
 
