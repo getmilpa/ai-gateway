@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/getmilpa/ai-gateway/compare/v0.17.0...v0.17.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* model-emitted non-array tool arguments normalize to the empty set ([#44](https://github.com/getmilpa/ai-gateway/issues/44)) ([6ef232b](https://github.com/getmilpa/ai-gateway/commit/6ef232bb20aff76975fb5ddddba5473a2fcb91e3))
+
 ## [0.17.0](https://github.com/getmilpa/ai-gateway/compare/v0.16.1...v0.17.0) (2026-09-02)
 
 
