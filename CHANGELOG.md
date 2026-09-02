@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/getmilpa/ai-gateway/compare/v0.18.0...v0.18.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* the provider flake retries twice — double flakes were measured live twice ([#50](https://github.com/getmilpa/ai-gateway/issues/50)) ([bf81a8e](https://github.com/getmilpa/ai-gateway/commit/bf81a8eb24f19d28b68bf0f7892a4954ff93f49d))
+
 ## [0.18.0](https://github.com/getmilpa/ai-gateway/compare/v0.17.2...v0.18.0) (2026-09-02)
 
 
