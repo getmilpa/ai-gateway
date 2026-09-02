@@ -234,6 +234,10 @@ class LlmService implements LlmServiceInterface
                 // Already carries the provider prefix AND the attempt count; wrapping it again
                 // would stutter the prefix and bury the count.
                 throw $e;
+            } catch (ContextExceededException $e) {
+                // The type IS the contract: the orchestrator heals on it. Wrapping it in a plain
+                // RuntimeException here would blind the streaming path to the one governable 4xx.
+                throw $e;
             } catch (\Throwable $e) {
                 // `send()` lanza `GuzzleException`, que NO es `ClientExceptionInterface`; se atrapa
                 // ancho para conservar el contrato del mensaje que los llamadores esperan.
@@ -524,7 +528,10 @@ class LlmService implements LlmServiceInterface
      * `"$provider API Error: ..."` message contract this class's callers depend on (see
      * `callOpenAi()`'s and `callAnthropic()`'s `ClientExceptionInterface` catches).
      *
-     * @throws \RuntimeException when the response status is >= 400
+     * @throws ContextExceededException when the status is 400 and the body carries the narrow
+     *                                  exceed-context signature — same message, typed so the
+     *                                  orchestrator can heal it
+     * @throws \RuntimeException        for every other response status >= 400
      */
     private function assertSuccessStatus(ResponseInterface $response, string $provider): void
     {
@@ -535,13 +542,61 @@ class LlmService implements LlmServiceInterface
 
         $reason = trim($response->getReasonPhrase());
         $status = $reason !== '' ? "{$statusCode} {$reason}" : (string) $statusCode;
+        $body = (string) $response->getBody();
 
-        throw new \RuntimeException(sprintf(
+        $message = sprintf(
             '%s API Error: HTTP %s - %s',
             $provider,
             $status,
-            $this->truncateErrorBody((string) $response->getBody())
-        ));
+            $this->truncateErrorBody($body)
+        );
+
+        // THE ONE GOVERNABLE 4xx GETS A TYPE, NOTHING ELSE CHANGES. A 400 whose body carries
+        // the exceed-context signature is the provider MEASURING the request — the orchestrator
+        // owns re-projection and can act on those numbers (greenhouse fixture run 12). The
+        // message is byte-identical to the untyped path, and every other status keeps the plain
+        // RuntimeException, so consumers catching the base class see zero change.
+        if ($statusCode === 400) {
+            $exceeded = $this->parseContextExceeded($body);
+            if ($exceeded !== null) {
+                throw new ContextExceededException($message, $exceeded['n_prompt_tokens'], $exceeded['n_ctx']);
+            }
+        }
+
+        throw new \RuntimeException($message);
+    }
+
+    /**
+     * Parse a 400 body for the NARROW exceed-context signature and nothing wider: the decoded
+     * error object (nested under `error`, or the body itself) must declare
+     * `"type":"exceed_context_size_error"` — the discriminator llama.cpp's OpenAI-compat layer
+     * speaks, measured verbatim on run 12. `n_prompt_tokens`/`n_ctx` are carried when present
+     * and integer; anything the provider did not say stays `null`, never a fabricated number.
+     * Any other body — a different type, a non-JSON error page — is not this failure.
+     *
+     * @return array{n_prompt_tokens: int|null, n_ctx: int|null}|null the provider's numbers, or
+     *                                                                `null` when the body is not
+     *                                                                the exceed-context error
+     */
+    private function parseContextExceeded(string $body): ?array
+    {
+        $decoded = json_decode($body, true);
+        if (!\is_array($decoded)) {
+            return null;
+        }
+
+        $error = \is_array($decoded['error'] ?? null) ? $decoded['error'] : $decoded;
+        if (($error['type'] ?? null) !== 'exceed_context_size_error') {
+            return null;
+        }
+
+        $nPrompt = $error['n_prompt_tokens'] ?? null;
+        $nCtx = $error['n_ctx'] ?? null;
+
+        return [
+            'n_prompt_tokens' => \is_int($nPrompt) ? $nPrompt : null,
+            'n_ctx' => \is_int($nCtx) ? $nCtx : null,
+        ];
     }
 
     /**
