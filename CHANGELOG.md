@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/getmilpa/ai-gateway/compare/v0.17.1...v0.17.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* one retry for the provider flake caused by the model's own malformed tool-call output ([#46](https://github.com/getmilpa/ai-gateway/issues/46)) ([31ea6e6](https://github.com/getmilpa/ai-gateway/commit/31ea6e606de98d42bb4e69698dd80bdec5a33974))
+
 ## [0.17.1](https://github.com/getmilpa/ai-gateway/compare/v0.17.0...v0.17.1) (2026-09-02)
 
 
