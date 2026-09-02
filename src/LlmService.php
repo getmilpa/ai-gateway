@@ -63,6 +63,15 @@ class LlmService implements LlmServiceInterface
      */
     private const TRANSPORT_RETRY_BACKOFF_MICROSECONDS = 2_000_000;
 
+    /**
+     * The narrow body signature of a provider 500 whose CAUSE is the model's own malformed
+     * tool-call output (llama.cpp failing to parse what its model just generated) — measured
+     * verbatim on run 10: «Failed to parse tool call arguments as JSON ... missing closing
+     * quote» at column 5389 of an inline file body. That flake earns exactly ONE retry; any
+     * other 5xx stays final on the first answer.
+     */
+    private const PROVIDER_FLAKE_SIGNATURE = 'Failed to parse tool call arguments';
+
     private ClientInterface $httpClient;
     private RequestFactoryInterface $requestFactory;
     private StreamFactoryInterface $streamFactory;
@@ -202,7 +211,8 @@ class LlmService implements LlmServiceInterface
                 // igual sobre el cuerpo ya descargado —correcto, sólo que no en vivo—. La división
                 // vive en `transmit()`, detrás del reintento de transporte.
                 $transportRetried = false;
-                $response = $this->sendWithTransportRetry($request, 'OpenAI', $transportRetried, stream: true);
+                $flakeRetried = false;
+                $response = $this->sendWithRetries($request, 'OpenAI', $transportRetried, $flakeRetried, stream: true);
 
                 $this->assertSuccessStatus($response, 'OpenAI');
 
@@ -214,6 +224,9 @@ class LlmService implements LlmServiceInterface
 
                 if ($transportRetried) {
                     $streamMessage['transport_retried'] = true;
+                }
+                if ($flakeRetried) {
+                    $streamMessage['provider_flake_retried'] = true;
                 }
 
                 return $streamMessage;
@@ -236,7 +249,8 @@ class LlmService implements LlmServiceInterface
             ], $payload);
 
             $transportRetried = false;
-            $response = $this->sendWithTransportRetry($request, 'OpenAI', $transportRetried);
+            $flakeRetried = false;
+            $response = $this->sendWithRetries($request, 'OpenAI', $transportRetried, $flakeRetried);
 
             $this->assertSuccessStatus($response, 'OpenAI');
 
@@ -250,6 +264,9 @@ class LlmService implements LlmServiceInterface
             }
             if ($transportRetried) {
                 $message['transport_retried'] = true;
+            }
+            if ($flakeRetried) {
+                $message['provider_flake_retried'] = true;
             }
 
             return $message;
@@ -438,7 +455,8 @@ class LlmService implements LlmServiceInterface
             ], $payload);
 
             $transportRetried = false;
-            $response = $this->sendWithTransportRetry($request, 'Anthropic', $transportRetried);
+            $flakeRetried = false;
+            $response = $this->sendWithRetries($request, 'Anthropic', $transportRetried, $flakeRetried);
 
             $this->assertSuccessStatus($response, 'Anthropic');
 
@@ -481,6 +499,9 @@ class LlmService implements LlmServiceInterface
             }
             if ($transportRetried) {
                 $message['transport_retried'] = true;
+            }
+            if ($flakeRetried) {
+                $message['provider_flake_retried'] = true;
             }
 
             $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
@@ -562,6 +583,55 @@ class LlmService implements LlmServiceInterface
         }
 
         return $e instanceof \GuzzleHttp\Exception\TransferException;
+    }
+
+    /**
+     * Send one request through the transport retry AND the provider-flake retry: a 5xx whose
+     * body carries {@see self::PROVIDER_FLAKE_SIGNATURE} (the model's own malformed tool-call
+     * output) is retried exactly once — new sampling usually yields well-formed output — while
+     * any other 5xx throws immediately in the same format {@see assertSuccessStatus()} uses,
+     * and every 4xx returns untouched for the caller's own status guard (a context-exceeded
+     * 400 must surface verbatim, never retried). Out-params report both retries so the caller
+     * can note them on the result and the record stays honest.
+     *
+     * @param bool $transportRetried out-param: the single transport retry was used
+     * @param bool $flakeRetried     out-param: the single provider-flake retry was used
+     */
+    private function sendWithRetries(RequestInterface $request, string $provider, bool &$transportRetried, bool &$flakeRetried, bool $stream = false): ResponseInterface
+    {
+        $flakeRetried = false;
+        $response = $this->sendWithTransportRetry($request, $provider, $transportRetried, $stream);
+        if ($response->getStatusCode() < 500) {
+            return $response;
+        }
+
+        $body = (string) $response->getBody();
+        if (str_contains($body, self::PROVIDER_FLAKE_SIGNATURE)) {
+            $this->log("provider output flake ({$provider} 5xx: malformed model tool-call), retrying once after backoff");
+            usleep(self::TRANSPORT_RETRY_BACKOFF_MICROSECONDS);
+            if ($request->getBody()->isSeekable()) {
+                $request->getBody()->rewind();
+            }
+            $flakeRetried = true;
+
+            $secondTransport = false;
+            $response = $this->sendWithTransportRetry($request, $provider, $secondTransport, $stream);
+            $transportRetried = $transportRetried || $secondTransport;
+            if ($response->getStatusCode() < 500) {
+                return $response;
+            }
+            $body = (string) $response->getBody();
+        }
+
+        $reason = trim($response->getReasonPhrase());
+        $status = $reason !== '' ? "{$response->getStatusCode()} {$reason}" : (string) $response->getStatusCode();
+
+        throw new \RuntimeException(sprintf(
+            '%s API Error: HTTP %s - %s',
+            $provider,
+            $status,
+            $this->truncateErrorBody($body)
+        ));
     }
 
     /**
