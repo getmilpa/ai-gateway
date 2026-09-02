@@ -608,7 +608,7 @@ class AgentOrchestrator
                     if ($jsonError !== JSON_ERROR_NONE) {
                         $this->log("Step $i: ❌ JSON DECODE ERROR: " . json_last_error_msg());
                     }
-                    $this->log("Step $i: 🔧 PARSED ARGS keys: " . implode(', ', array_keys($functionArgs ?? [])));
+                    $this->log("Step $i: 🔧 PARSED ARGS keys: " . implode(', ', array_keys($functionArgs)));
 
                     $argsJson = json_encode($functionArgs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     $this->log("Step $i: 🔧 EXECUTING tool='$functionName' args=$argsJson");
@@ -620,7 +620,7 @@ class AgentOrchestrator
                     $describing = $functionName === 'describe_tool';
                     if ($this->lazyTools && ($describing || !in_array($functionName, $unlockedTools, true))) {
                         $wanted = $describing
-                            ? (is_array($functionArgs) ? (string) ($functionArgs['name'] ?? '') : '')
+                            ? (string) ($functionArgs['name'] ?? '')
                             : $functionName;
                         $schema = null;
                         foreach ($this->mcpClient->getToolSummaries() as $summary) {
