@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/getmilpa/ai-gateway/compare/v0.17.2...v0.18.0) (2026-09-02)
+
+
+### Features
+
+* self-heal the exceed-context 400 by the provider's own numbers ([#48](https://github.com/getmilpa/ai-gateway/issues/48)) ([a73a380](https://github.com/getmilpa/ai-gateway/commit/a73a380708e5a04971c2f28092c437e5a6879cb7))
+
 ## [0.17.2](https://github.com/getmilpa/ai-gateway/compare/v0.17.1...v0.17.2) (2026-09-02)
 
 
