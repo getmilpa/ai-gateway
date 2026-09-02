@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/getmilpa/ai-gateway/compare/v0.16.0...v0.16.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* the stall notice rides as a user-role steering line — providers reject non-leading system messages ([#40](https://github.com/getmilpa/ai-gateway/issues/40)) ([e345da7](https://github.com/getmilpa/ai-gateway/commit/e345da791d0deb651ea8d5e03cdb49f938182a4f))
+
 ## [0.16.0](https://github.com/getmilpa/ai-gateway/compare/v0.15.0...v0.16.0) (2026-09-02)
 
 
