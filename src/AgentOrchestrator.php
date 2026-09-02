@@ -594,6 +594,16 @@ class AgentOrchestrator
                     $functionArgs = json_decode($rawArguments, true);
                     $jsonError = json_last_error();
 
+                    // The model sometimes emits arguments as null, '', or a bare scalar — all of
+                    // which decode to a non-array and used to reach the array-typed tool callback
+                    // as a fatal TypeError (measured live: ConsentBridge::callTool(), null given).
+                    // A non-array argument set IS the empty argument set: the tool itself answers
+                    // with its schema-teaching refusal when required arguments are missing.
+                    if (! \is_array($functionArgs)) {
+                        $this->log("Step $i: ⚠ non-array arguments normalized to [] for '$functionName'");
+                        $functionArgs = [];
+                    }
+
                     // DEBUG: Log parsing result
                     if ($jsonError !== JSON_ERROR_NONE) {
                         $this->log("Step $i: ❌ JSON DECODE ERROR: " . json_last_error_msg());
