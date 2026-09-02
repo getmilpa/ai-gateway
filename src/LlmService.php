@@ -72,6 +72,14 @@ class LlmService implements LlmServiceInterface
      */
     private const PROVIDER_FLAKE_SIGNATURE = 'Failed to parse tool call arguments';
 
+    /**
+     * How many times the provider-flake 5xx retries before the answer is final. One was not
+     * enough: double flakes were measured twice live (runs 11 and 12 — the model breaking its
+     * tool-call JSON on consecutive samples, once at column 15,248 and once at column 1,675,
+     * so the failure is escape-fumbling at any size, not only length).
+     */
+    private const MAX_PROVIDER_FLAKE_RETRIES = 2;
+
     private ClientInterface $httpClient;
     private RequestFactoryInterface $requestFactory;
     private StreamFactoryInterface $streamFactory;
@@ -661,17 +669,20 @@ class LlmService implements LlmServiceInterface
         }
 
         $body = (string) $response->getBody();
-        if (str_contains($body, self::PROVIDER_FLAKE_SIGNATURE)) {
-            $this->log("provider output flake ({$provider} 5xx: malformed model tool-call), retrying once after backoff");
+        for ($flake = 1; $flake <= self::MAX_PROVIDER_FLAKE_RETRIES; ++$flake) {
+            if (! str_contains($body, self::PROVIDER_FLAKE_SIGNATURE)) {
+                break;
+            }
+            $this->log("provider output flake ({$provider} 5xx: malformed model tool-call), retry {$flake} of " . self::MAX_PROVIDER_FLAKE_RETRIES . ' after backoff');
             usleep(self::TRANSPORT_RETRY_BACKOFF_MICROSECONDS);
             if ($request->getBody()->isSeekable()) {
                 $request->getBody()->rewind();
             }
             $flakeRetried = true;
 
-            $secondTransport = false;
-            $response = $this->sendWithTransportRetry($request, $provider, $secondTransport, $stream);
-            $transportRetried = $transportRetried || $secondTransport;
+            $nextTransport = false;
+            $response = $this->sendWithTransportRetry($request, $provider, $nextTransport, $stream);
+            $transportRetried = $transportRetried || $nextTransport;
             if ($response->getStatusCode() < 500) {
                 return $response;
             }
