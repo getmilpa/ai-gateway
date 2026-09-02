@@ -73,6 +73,27 @@ class AgentOrchestrator
     private const MAX_TOOL_RESULT_CHARS = 8000;
 
     /**
+     * The fraction of the declared context window one outgoing call may occupy. The rest stays
+     * free for the completion and provider overhead — the measured death (greenhouse fixture
+     * series, run 8) left the model an 88-token completion at 31.4k of a 32,768 window, so the
+     * budget must land the projection well short of the wall, not at it.
+     */
+    private const LEG_BUDGET_FRACTION = 0.75;
+
+    /**
+     * The newest tool results that never elide — the model's working set. Everything it is
+     * actively reasoning about rides in full; only results older than these are candidates.
+     */
+    private const KEEP_RECENT_RESULTS = 4;
+
+    /**
+     * The chars-per-token heuristic the projection estimator shares with the rest of the family:
+     * the same ruler {@see boundToolResult}'s sizing was calibrated against (~4 chars ≈ 1 token
+     * for the models measured).
+     */
+    private const ESTIMATED_CHARS_PER_TOKEN = 4;
+
+    /**
      * A final answer whose TRIMMED content is shorter than this counts as no answer at all.
      * Calibrated to the measured failure (the model answered one token, "🔧 ") while staying
      * far below any legitimately terse reply a human would accept as an answer.
@@ -110,6 +131,13 @@ class AgentOrchestrator
     /** The caller's semantic-progress observer, or `null` for the byte-identical default path. */
     private ?ProgressProbe $progressProbe;
 
+    /**
+     * The model's declared context window in tokens, or `0` for the byte-identical unbounded
+     * default. When declared, each outgoing call's projection is bounded to
+     * {@see LEG_BUDGET_FRACTION} of it (greenhouse fixture series, run 8).
+     */
+    private int $contextTokens;
+
     public function __construct(
         LlmService $llm,
         McpClientService $mcpClient,
@@ -118,7 +146,8 @@ class AgentOrchestrator
         ?RendererRegistry $rendererRegistry = null,
         ?PlanBoard $planBoard = null,
         bool $lazyTools = false,
-        ?ProgressProbe $progressProbe = null
+        ?ProgressProbe $progressProbe = null,
+        int $contextTokens = 0
     ) {
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
@@ -129,6 +158,7 @@ class AgentOrchestrator
         $this->toolContext = null;
         $this->lazyTools = $lazyTools;
         $this->progressProbe = $progressProbe;
+        $this->contextTokens = $contextTokens;
     }
 
     /**
@@ -227,6 +257,92 @@ class AgentOrchestrator
         return mb_substr($output, 0, self::MAX_TOOL_RESULT_CHARS)
             . "\n…[tool result truncated: {$elided} characters elided to fit the model window;"
             . ' the full result is in the session log]';
+    }
+
+    /**
+     * Estimate the token cost of an outgoing projection: serialized message chars over
+     * {@see ESTIMATED_CHARS_PER_TOKEN}. An estimate, not a count — it only has to track the
+     * climb closely enough that the budget stops it well short of the wall.
+     *
+     * @param list<array<string, mixed>> $projection the messages about to go out
+     */
+    private function estimateProjectionTokens(array $projection): int
+    {
+        $chars = 0;
+        foreach ($projection as $message) {
+            $encoded = json_encode($message, JSON_UNESCAPED_UNICODE);
+            $chars += mb_strlen($encoded === false ? '' : $encoded);
+        }
+
+        return intdiv($chars, self::ESTIMATED_CHARS_PER_TOKEN);
+    }
+
+    /**
+     * Bound ONE outgoing projection to the leg budget — the intra-leg counterpart of the
+     * per-result {@see boundToolResult} (v0.14.1) and the between-legs WindowBudget: each step
+     * appends its tool results, so within one leg the SUM climbs ~3k tokens per step into the
+     * model's wall even with every single result bounded (greenhouse fixture series, run 8:
+     * 21,917 → 31,536 of 32,768, leaving an 88-token completion).
+     *
+     * While the estimate exceeds {@see LEG_BUDGET_FRACTION} of the declared context, the OLDEST
+     * leg-internal tool-result content is replaced with a short stub naming the tool and how to
+     * recover the value (the refetch doctrine). Nothing else is ever touched: the system prompt,
+     * user turns, assistant turns, the plan line, the stall notice and the newest
+     * {@see KEEP_RECENT_RESULTS} results ride in full, and no message is removed or re-rolled —
+     * chat templates require every assistant `tool_calls` id to keep its tool message.
+     *
+     * Per-call projection ONLY, the plan's own non-accumulation doctrine: `$messages` stays
+     * untouched, so the next call re-projects from full history against its own estimate.
+     *
+     * @param list<array<string, mixed>> $projection the per-call copy of the messages
+     * @param int                        $step       the loop step, for the log line
+     *
+     * @return list<array<string, mixed>> the projection, elided only as far as the budget requires
+     */
+    private function boundProjection(array $projection, int $step): array
+    {
+        if ($this->contextTokens <= 0) {
+            return $projection;
+        }
+
+        $budget = (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
+        if ($this->estimateProjectionTokens($projection) <= $budget) {
+            return $projection;
+        }
+
+        $toolIndexes = [];
+        foreach ($projection as $index => $message) {
+            if (($message['role'] ?? '') === 'tool' && \is_string($message['content'] ?? null)) {
+                $toolIndexes[] = $index;
+            }
+        }
+
+        // Oldest first, and never the newest KEEP_RECENT_RESULTS — the working set is protected
+        // even under a budget nothing can satisfy.
+        $elidible = \array_slice($toolIndexes, 0, max(0, \count($toolIndexes) - self::KEEP_RECENT_RESULTS));
+
+        $elidedTools = [];
+        foreach ($elidible as $index) {
+            if ($this->estimateProjectionTokens($projection) <= $budget) {
+                break;
+            }
+            $tool = (string) ($projection[$index]['name'] ?? 'the tool');
+            $projection[$index]['content'] = "[elided to fit the model window — re-invoke {$tool} for the full value]";
+            $elidedTools[] = $tool;
+        }
+
+        if ($elidedTools !== []) {
+            $this->log(sprintf(
+                'Step %d: intra-leg budget (%d of %d tokens) elided %d tool result(s): %s',
+                $step,
+                $budget,
+                $this->contextTokens,
+                \count($elidedTools),
+                implode(', ', $elidedTools)
+            ));
+        }
+
+        return $projection;
     }
 
     /**
@@ -442,6 +558,12 @@ class AgentOrchestrator
                 $paraElModelo[] = ['role' => 'user', 'content' => $noticeThisCall['notice']];
                 $this->log("Step $i: stall notice injected — the next answer faces the forced choice");
             }
+
+            // THE INTRA-LEG BUDGET GOVERNS THIS CALL'S PROJECTION ONLY (greenhouse fixture
+            // series, run 8): with a declared context, the oldest leg-internal tool results are
+            // elided until the outgoing estimate fits the leg budget. `$messages` stays
+            // untouched — the next call re-projects from full history, like the plan above.
+            $paraElModelo = $this->boundProjection($paraElModelo, $i);
 
             // 1. Ask LLM
             $response = $this->llm->generateResponse($prompt, $tools, $paraElModelo);
