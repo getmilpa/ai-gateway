@@ -370,7 +370,7 @@ class AgentOrchestrator
         $unlockedTools = [];
 
         // THE FORCED CHOICE'S STATE (greenhouse decisions/0185): when the probe answers stalled,
-        // the notice rides the NEXT call as one appended system line and the answer to it is held
+        // the notice rides the NEXT call as one appended user-role steering line and the answer to it is held
         // to the choice — act, declare debt, abandon, or the leg ends. `null` when nothing is due.
         /** @var array{notice: string, receipt: array<string, mixed>}|null $pendingStall */
         $pendingStall = null;
@@ -435,7 +435,11 @@ class AgentOrchestrator
             $noticeThisCall = $pendingStall;
             $pendingStall = null;
             if ($noticeThisCall !== null) {
-                $paraElModelo[] = ['role' => 'system', 'content' => $noticeThisCall['notice']];
+                // USER role, not system: provider chat templates reject a system message that is not
+                // at the beginning — qwen's Jinja raises \"System message must be at the beginning\"
+                // as an HTTP 500, measured verbatim on two live runs that died exactly on the
+                // notice-bearing call. A user-role steering line is accepted at any position.
+                $paraElModelo[] = ['role' => 'user', 'content' => $noticeThisCall['notice']];
                 $this->log("Step $i: stall notice injected — the next answer faces the forced choice");
             }
 

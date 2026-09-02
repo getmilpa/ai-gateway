@@ -134,7 +134,9 @@ class ForcedChoiceTest extends TestCase
 
         $notices = static fn (array $messages): array => array_values(array_filter(
             $messages,
-            static fn (array $m): bool => ($m['role'] ?? '') === 'system'
+            // user role, not system: providers reject non-leading system messages (the measured
+            // qwen Jinja 500) — the notice is a steering line, and steering rides as user.
+            static fn (array $m): bool => ($m['role'] ?? '') === 'user'
                 && str_contains((string) ($m['content'] ?? ''), 'No semantic progress'),
         ));
 
