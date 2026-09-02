@@ -594,11 +594,21 @@ class AgentOrchestrator
                     $functionArgs = json_decode($rawArguments, true);
                     $jsonError = json_last_error();
 
+                    // The model sometimes emits arguments as null, '', or a bare scalar — all of
+                    // which decode to a non-array and used to reach the array-typed tool callback
+                    // as a fatal TypeError (measured live: ConsentBridge::callTool(), null given).
+                    // A non-array argument set IS the empty argument set: the tool itself answers
+                    // with its schema-teaching refusal when required arguments are missing.
+                    if (! \is_array($functionArgs)) {
+                        $this->log("Step $i: ⚠ non-array arguments normalized to [] for '$functionName'");
+                        $functionArgs = [];
+                    }
+
                     // DEBUG: Log parsing result
                     if ($jsonError !== JSON_ERROR_NONE) {
                         $this->log("Step $i: ❌ JSON DECODE ERROR: " . json_last_error_msg());
                     }
-                    $this->log("Step $i: 🔧 PARSED ARGS keys: " . implode(', ', array_keys($functionArgs ?? [])));
+                    $this->log("Step $i: 🔧 PARSED ARGS keys: " . implode(', ', array_keys($functionArgs)));
 
                     $argsJson = json_encode($functionArgs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     $this->log("Step $i: 🔧 EXECUTING tool='$functionName' args=$argsJson");
@@ -610,7 +620,7 @@ class AgentOrchestrator
                     $describing = $functionName === 'describe_tool';
                     if ($this->lazyTools && ($describing || !in_array($functionName, $unlockedTools, true))) {
                         $wanted = $describing
-                            ? (is_array($functionArgs) ? (string) ($functionArgs['name'] ?? '') : '')
+                            ? (string) ($functionArgs['name'] ?? '')
                             : $functionName;
                         $schema = null;
                         foreach ($this->mcpClient->getToolSummaries() as $summary) {
