@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/getmilpa/ai-gateway/compare/v0.19.0...v0.20.0) (2026-09-04)
+
+
+### Features
+
+* request usage on streamed calls so the token cost is reported ([#54](https://github.com/getmilpa/ai-gateway/issues/54)) ([9473883](https://github.com/getmilpa/ai-gateway/commit/9473883adc9ad641cc82d59e2e0d0d730cbe28ed))
+
 ## [0.19.0](https://github.com/getmilpa/ai-gateway/compare/v0.18.1...v0.19.0) (2026-09-04)
 
 
