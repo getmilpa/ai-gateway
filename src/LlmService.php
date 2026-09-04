@@ -100,7 +100,7 @@ class LlmService implements LlmServiceInterface
      * presence is also the switch: set → the OpenAI-compatible call streams; null → the call
      * stays the single buffered request it was, byte for byte.
      *
-     * @var (\Closure(string): void)|null
+     * @var (\Closure(string, string=): void)|null
      */
     private ?\Closure $onStreamChunk;
 
@@ -294,9 +294,10 @@ class LlmService implements LlmServiceInterface
      * buffered path returns. Tool-call fragments are grouped by their `index`: `function.name`
      * arrives once, `function.arguments` in pieces to concatenate.
      *
-     * @param \Closure(string): void    $onChunk
-     * @param array<string, mixed>|null $usage   Out-param: the provider's own usage block from the
-     *                                           final chunk, when one carried it, else left null.
+     * @param \Closure(string, string=): void $onChunk Fired per delta: `(piece, kind)` where kind is
+     *                                                 'content' (the answer) or 'reasoning' (the thinking).
+     * @param array<string, mixed>|null       $usage   Out-param: the provider's own usage block from the
+     *                                                 final chunk, when one carried it, else left null.
      *
      * @return array<string, mixed>
      */
@@ -336,10 +337,14 @@ class LlmService implements LlmServiceInterface
             $fired = false;
             if (isset($delta['reasoning_content']) && \is_string($delta['reasoning_content']) && $delta['reasoning_content'] !== '') {
                 $reasoning .= $delta['reasoning_content'];
+                // Fire the chunk callback for the REASONING delta too, tagged so a surface can stream the
+                // model's thinking token by token (greenhouse decisions/0190). A callback declared `(string)`
+                // ignores the second argument, so this stays backward-compatible with content-only consumers.
+                $onChunk($delta['reasoning_content'], 'reasoning');
             }
             if (isset($delta['content']) && \is_string($delta['content']) && $delta['content'] !== '') {
                 $content .= $delta['content'];
-                $onChunk($delta['content']);
+                $onChunk($delta['content'], 'content');
                 $fired = true;
             }
 

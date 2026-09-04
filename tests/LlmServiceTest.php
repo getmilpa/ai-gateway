@@ -824,6 +824,37 @@ class LlmServiceTest extends TestCase
     }
 
     /**
+     * EL PENSAMIENTO TAMBIÉN LATE POR CHUNK (greenhouse decisions/0190). Un modelo con razonamiento
+     * emite `reasoning_content` en deltas ANTES de la respuesta; el callback dispara por cada uno con
+     * `kind = 'reasoning'`, para que una superficie viva muestre las palabras del pensamiento armándose.
+     * El `reasoning_content` completo sigue viajando en el mensaje final, aparte del `content`.
+     */
+    public function testStreamingFiresReasoningDeltasTaggedAndSeparate(): void
+    {
+        $sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Let me \"}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think.\"}}]}\n\n"
+             . "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
+             . "data: [DONE]\n\n";
+        $fake = new FakeHttpClient(new Response(200, ['Content-Type' => 'text/event-stream'], $sse));
+        $reasoning = [];
+        $content = [];
+        $service = new LlmService('api-key', 'qwen', 'openai', null, $fake, onStreamChunk: static function (string $piece, string $kind = 'content') use (&$reasoning, &$content): void {
+            if ($kind === 'reasoning') {
+                $reasoning[] = $piece;
+            } else {
+                $content[] = $piece;
+            }
+        });
+
+        $message = $service->generateResponse('hola');
+
+        self::assertSame(['Let me ', 'think.'], $reasoning, 'cada delta de reasoning dispara tagged');
+        self::assertSame(['Answer'], $content, 'el content dispara aparte');
+        self::assertSame('Answer', $message['content']);
+        self::assertSame('Let me think.', $message['reasoning_content'] ?? null, 'el reasoning completo viaja en el mensaje');
+    }
+
+    /**
      * Los tool_calls llegan fragmentados: `function.name` una vez, `function.arguments` en
      * pedazos, agrupados por `index`. El ensamblado debe reunirlos en la misma forma que el
      * camino no-streaming (`callOpenAi`).
