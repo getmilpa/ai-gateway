@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/getmilpa/ai-gateway/compare/v0.18.1...v0.19.0) (2026-09-04)
+
+
+### Features
+
+* stream reasoning deltas, tagged, so a surface can show the thinking ([#52](https://github.com/getmilpa/ai-gateway/issues/52)) ([cf5fcb6](https://github.com/getmilpa/ai-gateway/commit/cf5fcb6f86e18fa28dd36056cc9ea87a9db1b89d))
+
 ## [0.18.1](https://github.com/getmilpa/ai-gateway/compare/v0.18.0...v0.18.1) (2026-09-02)
 
 
