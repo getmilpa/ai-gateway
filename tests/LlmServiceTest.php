@@ -821,6 +821,9 @@ class LlmServiceTest extends TestCase
 
         self::assertSame(['role' => 'assistant', 'content' => 'Hello mundo'], $message);
         self::assertSame(3, $chunks, 'el callback dispara una vez por delta con contenido');
+        // A streamed call asks for the usage-only final chunk, so its token cost is reported (decisions/0192).
+        $sent = (array) json_decode((string) $fake->lastRequest->getBody(), true);
+        self::assertSame(['include_usage' => true], $sent['stream_options'] ?? null);
     }
 
     /**

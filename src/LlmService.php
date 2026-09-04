@@ -205,6 +205,11 @@ class LlmService implements LlmServiceInterface
         // buffereada. Pedir `stream` sin consumir en vivo no gana nada, así que sólo se pide aquí.
         if ($this->onStreamChunk !== null) {
             $payload['stream'] = true;
+            // Ask for the usage-only final chunk, so a streamed call reports its token cost the way a buffered
+            // one does (greenhouse decisions/0192). Without it a provider may stream the answer and never say
+            // what it cost, and a token bar reading the recorded facts finds nothing to count. OpenAI needs
+            // this flag; llama.cpp honours it too.
+            $payload['stream_options'] = ['include_usage' => true];
 
             try {
                 $request = $this->buildJsonRequest($this->uri('https://api.openai.com', '/v1/chat/completions'), [
