@@ -68,7 +68,10 @@ class AgentOrchestrator
      * The FULL result still reaches the session log through the channel observer; this bounds only
      * what returns to the window (greenhouse decisions/0040: the window derives from consequence,
      * not the raw). A generous default: big enough for a real file read or listing, small enough that
-     * no one result can dominate a 32K window. A window-derived budget is the follow-up.
+     * no one result can dominate a 32K window.
+     *
+     * This is now the CEILING, not the budget: {@see toolResultBudget()} derives the real one from the
+     * declared window and can only come in UNDER this. See that method for why it never goes over.
      */
     private const MAX_TOOL_RESULT_CHARS = 8000;
 
@@ -279,15 +282,71 @@ class AgentOrchestrator
      */
     private function boundToolResult(string $output): string
     {
-        if (mb_strlen($output) <= self::MAX_TOOL_RESULT_CHARS) {
+        $budget = $this->toolResultBudget();
+
+        if (mb_strlen($output) <= $budget) {
             return $output;
         }
 
-        $elided = mb_strlen($output) - self::MAX_TOOL_RESULT_CHARS;
+        $elided = mb_strlen($output) - $budget;
 
-        return mb_substr($output, 0, self::MAX_TOOL_RESULT_CHARS)
+        return mb_substr($output, 0, $budget)
             . "\n…[tool result truncated: {$elided} characters elided to fit the model window;"
             . ' the full result is in the session log]';
+    }
+
+    /**
+     * What ONE tool result may contribute to the window, derived from the window itself.
+     *
+     * A fixed 8 000 characters is a different thing on every model. On a 32K-token model it is about
+     * 6 % of the context; on an 8K one it is a QUARTER of it — and {@see KEEP_RECENT_RESULTS} of them
+     * ride in full, so four such results are the entire window and the turn dies before any history
+     * compaction can apply. That is the failure this cap was added to prevent, reappearing on the
+     * models most likely to hit it.
+     *
+     * The derivation reuses this class's own numbers rather than inventing a fraction, and that matters
+     * more than it sounds: the first version budgeted a leg-EIGHTH, and `IntraLegBudgetTest` went red
+     * on three cases. It was right. A leg-eighth is a SECOND OPINION about what the working set may
+     * cost, and this class already holds one — {@see KEEP_RECENT_RESULTS} results ride in full inside
+     * {@see LEG_BUDGET_FRACTION} of the window. So one result gets a leg-QUARTER: the four that never
+     * elide may together fill the leg, which is exactly what those two constants already assume.
+     *
+     * ── AND IT HAS A FLOOR, BECAUSE A BUDGET CAN BECOME A DELETION ──────────────────────────────
+     *
+     * Below a quarter of the ceiling the derived value stops being a budget and becomes a deletion: it
+     * can no longer carry the file read or the listing the ceiling exists to allow. `IntraLegBudgetTest`
+     * proved it with a window of FOUR tokens — the derivation asked for three characters, and a
+     * falsifier that guarantees «the last four tool results survive even a budget so small that
+     * everything else elided» went red, correctly. An agent whose working set was deleted by arithmetic
+     * cannot proceed at all.
+     *
+     * So under the floor the ceiling stands and the LEG budget answers instead — eliding older results
+     * into re-invoke stubs while protecting the newest, which is the mechanism that already handles a
+     * pathological window. Two mechanisms, one boundary, said out loud.
+     *
+     * ── IT CAN ONLY EVER TIGHTEN ────────────────────────────────────────────────────────────────
+     *
+     * The derived budget is capped at {@see MAX_TOOL_RESULT_CHARS}, so a large-window model does not
+     * silently get a bigger one. Loosening a limit is a FEATURE and would need its own measurement —
+     * a run showing that a larger result helps rather than crowds — while tightening it is the fix
+     * the small-window failure already paid for. With no declared window the ceiling stands and
+     * behaviour is exactly what it was.
+     */
+    private function toolResultBudget(): int
+    {
+        if ($this->contextTokens <= 0) {
+            return self::MAX_TOOL_RESULT_CHARS;
+        }
+
+        $legTokens = $this->contextTokens * self::LEG_BUDGET_FRACTION;
+        $perResultTokens = $legTokens / self::KEEP_RECENT_RESULTS;
+        $derived = (int) floor($perResultTokens * self::ESTIMATED_CHARS_PER_TOKEN);
+
+        if ($derived < intdiv(self::MAX_TOOL_RESULT_CHARS, 4)) {
+            return self::MAX_TOOL_RESULT_CHARS;
+        }
+
+        return min(self::MAX_TOOL_RESULT_CHARS, $derived);
     }
 
     /**

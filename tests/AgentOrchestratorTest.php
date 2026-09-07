@@ -184,6 +184,90 @@ class AgentOrchestratorTest extends TestCase
         $this->assertStringContainsString('elided', $toolMsg['content']);
     }
 
+    /**
+     * The per-result budget comes from the WINDOW, and on a small one it is far tighter than the
+     * ceiling.
+     *
+     * A fixed 8 000 characters is a different thing on every model: about 6 % of a 32K-token context
+     * and a QUARTER of an 8K one — and four results ride in full, so on the small model four of them
+     * ARE the window. That is the failure this cap exists to prevent, reappearing exactly where it
+     * bites hardest.
+     */
+    public function testTheResultBudgetTightensOnASmallDeclaredWindow(): void
+    {
+        $small = $this->boundedResultFor(8192);
+        $unchanged = $this->boundedResultFor(0);
+
+        self::assertLessThan(
+            mb_strlen($unchanged),
+            mb_strlen($small),
+            'an 8K-window model must not be handed the same result as a model that declared nothing',
+        );
+        self::assertLessThan(6400, mb_strlen($small), 'a leg-quarter of 8192 tokens is ~6144 chars, plus the truncation marker');
+        self::assertStringContainsString('elided', $small, 'and it still says it was cut');
+    }
+
+    /**
+     * The ceiling holds: a declared window can only ever TIGHTEN the budget, never loosen it.
+     *
+     * Loosening a limit is a feature and would need its own measurement — a run showing a bigger
+     * result helps rather than crowds. Tightening is the fix the small-window failure already paid
+     * for. So the 32K calibration point and a 128K model answer exactly what they answered before.
+     */
+    public function testALargeWindowDoesNotQuietlyRaiseTheCeiling(): void
+    {
+        $ceiling = mb_strlen($this->boundedResultFor(0));
+
+        foreach ([32768, 131072] as $window) {
+            self::assertSame(
+                $ceiling,
+                mb_strlen($this->boundedResultFor($window)),
+                "a {$window}-token window must answer exactly what an undeclared one answers",
+            );
+        }
+    }
+
+    /** The bounded tool result an orchestrator with `$contextTokens` feeds back to the model. */
+    private function boundedResultFor(int $contextTokens): string
+    {
+        $llm = $this->createMock(LlmService::class);
+        $mcp = $this->createMock(McpClientService::class);
+        $mcp->method('getToolSummaries')->willReturn([
+            ['name' => 'observe', 'description' => 'dump', 'inputSchema' => []],
+        ]);
+        $mcp->method('callTool')->willReturn(str_repeat('X', 60000));
+
+        $captured = [];
+        $call = 0;
+        $llm->method('generateResponse')->willReturnCallback(
+            function ($prompt, $tools, $messages, $maxTokens) use (&$captured, &$call) {
+                $captured[] = $messages;
+                ++$call;
+                if ($call === 1) {
+                    return [
+                        'role' => 'assistant',
+                        'content' => '',
+                        'tool_calls' => [
+                            ['id' => 'c1', 'type' => 'function', 'function' => ['name' => 'observe', 'arguments' => '{}']],
+                        ],
+                    ];
+                }
+
+                return ['role' => 'assistant', 'content' => 'done'];
+            },
+        );
+
+        (new AgentOrchestrator($llm, $mcp, 10, $this->logger, contextTokens: $contextTokens))->run('inspect');
+
+        foreach ($captured[1] ?? [] as $message) {
+            if (($message['role'] ?? '') === 'tool') {
+                return (string) $message['content'];
+            }
+        }
+
+        self::fail('the tool result never reached the model');
+    }
+
     public function testRunWithMultipleToolCalls(): void
     {
         $tools = [
