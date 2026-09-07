@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/getmilpa/ai-gateway/compare/v0.20.0...v0.21.0) (2026-09-07)
+
+
+### Features
+
+* the per-result budget comes from the window, not from a constant ([#56](https://github.com/getmilpa/ai-gateway/issues/56)) ([b5cca55](https://github.com/getmilpa/ai-gateway/commit/b5cca55a26c52f44cf81839bcc5d26083f0c4a6e))
+
 ## [0.20.0](https://github.com/getmilpa/ai-gateway/compare/v0.19.0...v0.20.0) (2026-09-04)
 
 
