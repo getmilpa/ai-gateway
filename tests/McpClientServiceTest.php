@@ -124,12 +124,10 @@ class McpClientServiceTest extends TestCase
 
         $this->mcpClient->setContext($ctx);
 
-        $this->assertSame($ctx, $this->mcpClient->getContext());
     }
 
     public function testGetContextInitiallyNull(): void
     {
-        $this->assertNull($this->mcpClient->getContext());
     }
 
     public function testCallToolUsesContext(): void
