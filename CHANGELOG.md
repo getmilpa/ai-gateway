@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/getmilpa/ai-gateway/compare/v0.22.2...v0.23.0) (2026-09-08)
+
+
+### Features
+
+* the house asks the provider its window, and only the allocated one counts ([#65](https://github.com/getmilpa/ai-gateway/issues/65)) ([1d2b0ea](https://github.com/getmilpa/ai-gateway/commit/1d2b0eac9804c4a980c22509da113b3ef1a23062))
+
 ## [0.22.2](https://github.com/getmilpa/ai-gateway/compare/v0.22.1...v0.22.2) (2026-09-08)
 
 
