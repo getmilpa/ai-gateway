@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/getmilpa/ai-gateway/compare/v0.21.0...v0.22.0) (2026-09-08)
+
+
+### Features
+
+* the gate comes from milpa/tool-runtime — this package consumes it ([#58](https://github.com/getmilpa/ai-gateway/issues/58)) ([9826982](https://github.com/getmilpa/ai-gateway/commit/9826982cb1801439525a8edc2459f545108e1b7c))
+
 ## [0.21.0](https://github.com/getmilpa/ai-gateway/compare/v0.20.0...v0.21.0) (2026-09-07)
 
 
