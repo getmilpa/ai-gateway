@@ -15,28 +15,15 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 /**
- * Se avisa DESPUÉS de cada llamada a herramienta, con lo que contestó.
+ * The contract {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallRecorder} — told after every tool call, with what the tool answered — kept under this
+ * name for whoever implemented it here.
  *
- * ── POR QUÉ NO ALCANZABA CON {@see ToolCallGate} ────────────────────────────────────────────────
+ * The question moved down to milpa/tool-runtime, where every caller of tools already depends (greenhouse
+ * decisions/0225): a model is one caller, a governed door another. An implementer of THIS interface is still
+ * a gate wherever the base is asked for; new code implements the base directly.
  *
- * La compuerta ve la INTENCIÓN: qué se va a llamar y con qué. Eso sirve para decidir y no para
- * registrar, porque una intención no dice si funcionó — y una bitácora que apunta lo que se iba a
- * hacer en lugar de lo que pasó es peor que ninguna: se lee igual de segura y miente.
- *
- * Con las dos, quien retoma una sesión mañana sabe qué se intentó Y cómo salió, que es lo que evita
- * la falla más cara de una jornada larga: repetir el trabajo que el turno anterior ya hizo.
- *
- * Es opcional, como la compuerta. Sin nadie escuchando, el bucle corre igual.
+ * @deprecated implement {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallRecorder} instead
  */
-interface ToolCallRecorder
+interface ToolCallRecorder extends \Milpa\ToolRuntime\Gate\ToolCallRecorder
 {
-    /**
-     * Apunta que esta herramienta corrió y qué contestó.
-     *
-     * @param array<string, mixed> $arguments
-     * @param bool                 $ok        si la herramienta contestó en vez de tronar. Un fallo se
-     *                                        registra igual: saber qué se intentó y no funcionó es
-     *                                        justo lo que impide intentarlo otra vez
-     */
-    public function recorded(string $tool, array $arguments, string $result, bool $ok): void;
 }

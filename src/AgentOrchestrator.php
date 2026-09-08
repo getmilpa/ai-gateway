@@ -17,6 +17,8 @@ namespace Milpa\AiGateway;
 
 use Psr\Log\LoggerInterface;
 use Milpa\ToolRuntime\Contracts\ToolContext;
+use Milpa\ToolRuntime\Gate\GatedToolCalls;
+use Milpa\ToolRuntime\Gate\ToolCallRefused;
 use Milpa\ToolRuntime\Rendering\RendererRegistry;
 use Milpa\ToolRuntime\ToolResult;
 
@@ -142,7 +144,7 @@ class AgentOrchestrator
         . 'content now — no further reasoning, no tool calls.';
 
     private LlmService $llm;
-    private McpClientService $mcpClient;
+    private GatedToolCalls $mcpClient;
     private int $maxSteps;
     private ?LoggerInterface $logger;
     private ?RendererRegistry $rendererRegistry;
@@ -174,7 +176,7 @@ class AgentOrchestrator
 
     public function __construct(
         LlmService $llm,
-        McpClientService $mcpClient,
+        GatedToolCalls $mcpClient,
         int $maxSteps = 20,
         ?LoggerInterface $logger = null,
         ?RendererRegistry $rendererRegistry = null,
@@ -939,7 +941,7 @@ class AgentOrchestrator
 
                         // Store tool result for appending to final response
                         $toolResults[] = $output;
-                    } catch (ToolCallRefusedException $e) {
+                    } catch (ToolCallRefused $e) {
                         // UNA NEGATIVA TERMINA LA VUELTA — no se le devuelve al modelo.
                         //
                         // Si cayera en el catch de abajo, el modelo leería «no puedes hacer eso» como

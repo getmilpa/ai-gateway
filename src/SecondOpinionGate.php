@@ -64,7 +64,7 @@ final readonly class SecondOpinionGate implements ToolCallGate
      *                                que es exactamente lo que Q-P19-D/E midieron insuficiente
      */
     public function __construct(
-        private ToolCallGate $piso,
+        private \Milpa\ToolRuntime\Gate\ToolCallGate $piso,
         private LlmServiceInterface $modelo,
         private string $tarea,
         private array $jamas = [],
