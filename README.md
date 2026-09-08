@@ -196,13 +196,52 @@ bag, so a per-provider timeout has no seam to hang off anymore. The default now 
 covers the slower case for both. Inject your own `ClientInterface` if you need the tighter
 OpenAI-side timeout back.
 
+## Asking the provider for its context window: `ProviderWindow`
+
+The number that governs compaction used to be a human assertion nothing verified — an app declared
+a context window, and a declaration that was too large went unnoticed until the provider rejected
+the prompt mid-run. `ProviderWindow` asks instead:
+
+```php
+use Milpa\AiGateway\ProviderWindow;
+
+$window = new ProviderWindow('http://localhost:11438');
+$window->tokens();   // 32768, or null when the provider did not say
+```
+
+Three things it does not do, each on purpose:
+
+- **It reads only the window the server ALLOCATED.** Measured against `qwen3.8-27b` on llama.cpp,
+  `GET /v1/models` answers `data[0].meta.n_ctx` **32768** next to `n_ctx_train` **262144** — eight
+  times apart. A reader that took the training window would believe it had 262k of room and blow up
+  at 32k. When the training window is all a provider exposes, the answer is `null`.
+- **It never guesses and never raises.** Unreachable, non-JSON, JSON without the field, a zero, a
+  negative, a float, a numeric string — every one of them resolves to `null`. The caller asked for a
+  better number, not for a new way to fail.
+- **It asks once.** The answer is memoised per instance, the silence included: asking is egress.
+
+It tries `GET /v1/models` first — the OpenAI-compatible surface this gateway already drives, so any
+base URL it can talk to answers there by construction — and falls back to llama.cpp's `GET /props`
+(`default_generation_settings.n_ctx`), which carries the same figure but cannot be primary: the
+measured payload declares `"endpoint_props": false` about itself.
+
+The network is a seam, `callable(string): ?string`, so the whole reader is testable offline:
+
+```php
+$window = new ProviderWindow('http://provider.test', fn (string $url): ?string => $recordedBody);
+```
+
+`milpa/app-runtime` composes this with whatever the app declared and keeps **the smaller of the
+two** (greenhouse decisions/0233): a declaration is intent, the measurement is a ceiling that
+cannot be exceeded.
+
 ## What lives where
 
 | Layer | Package | Owns |
 |-------|---------|------|
 | Contracts | `milpa/tool-runtime` | `LlmServiceInterface` — the seam `LlmService` implements. |
 | Tool execution | `milpa/tool-runtime` | `ToolRegistry`, `ToolContext`, `ToolResult`, channel rendering — the pipeline `McpClientService` and `AgentOrchestrator` drive. |
-| **Gateway** | **`milpa/ai-gateway`** (this package) | The concrete `LlmService` (OpenAI + Anthropic, format translation both ways), `McpClientService` (registry facade), and `AgentOrchestrator` (the ask-act loop). |
+| **Gateway** | **`milpa/ai-gateway`** (this package) | The concrete `LlmService` (OpenAI + Anthropic, format translation both ways), `McpClientService` (registry facade), `AgentOrchestrator` (the ask-act loop), and `ProviderWindow` (the provider's allocated context window). |
 | Your app | your host / plugins | API keys and secrets management, the PSR-3 logger you wire in, and any channel-specific glue (Telegram, web chat, CLI) around `AgentOrchestrator::run()`. |
 
 ## Requirements
