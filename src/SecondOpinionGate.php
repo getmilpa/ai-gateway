@@ -52,16 +52,16 @@ use Psr\Log\NullLogger;
 final readonly class SecondOpinionGate implements ToolCallGate
 {
     /**
-     * @param \Milpa\ToolRuntime\Gate\ToolCallGate $piso  la compuerta sintáctica; decide PRIMERO y su `no` es definitivo
-     * @param string                               $tarea lo que el humano pidió, tal cual. Es contra esto que se juzga la
-     *                                                    llamada: sin la petición, «apagar un plugin» no es ni correcto ni
-     *                                                    incorrecto
-     * @param list<string>                         $jamas herramientas que este verificador mira con lupa. No es una lista de
-     *                                                    prohibidas —eso sería el piso otra vez— sino de las que ameritan
-     *                                                    preguntar si la tarea las pedía
-     * @param OptionTable|null                     $mesa  a quien se le avisa cuando ESTE juicio niega, para que la opción
-     *                                                    deje de estar enfrente. Sin mesa, la negativa es sólo un motivo —
-     *                                                    que es exactamente lo que Q-P19-D/E midieron insuficiente
+     * @param \Milpa\ToolRuntime\Gate\ToolCallGate $piso  the syntactic gate; it decides FIRST and its `no` is final
+     * @param string                               $tarea what the human asked for, verbatim. The call is judged against
+     *                                                    it: without the petition, «disable a plugin» is neither right
+     *                                                    nor wrong
+     * @param list<string>                         $jamas the tools this verifier looks at closely. Not a list of
+     *                                                    forbidden ones — that would be the floor again — but of the
+     *                                                    ones worth asking whether the task called for them
+     * @param OptionTable|null                     $mesa  who is told when THIS judgement refuses, so the option leaves
+     *                                                    the table. Without one the refusal is only a reason — exactly
+     *                                                    what Q-P19-D/E measured as insufficient
      */
     public function __construct(
         private \Milpa\ToolRuntime\Gate\ToolCallGate $piso,

@@ -15,7 +15,8 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 /**
- * Una {@see ToolCallGate} negó esta llamada. Kept under this name: {@see \Milpa\ToolRuntime\Gate\ToolCallRefused} is what the gated calls throw, and catching the base catches this too (greenhouse decisions/0225).
+ * A {@see ToolCallGate} refused this call. Kept under this name: {@see \Milpa\ToolRuntime\Gate\ToolCallRefused} is what the
+ * gated calls throw, and catching the base catches this too (greenhouse decisions/0225).
  *
  * Es un tipo propio y no una `\Exception` cualquiera porque el orquestador tiene que poder
  * DISTINGUIRLA: cualquier otra excepción de una herramienta se le devuelve al modelo como texto y el

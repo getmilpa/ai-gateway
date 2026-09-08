@@ -16,6 +16,7 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 use Milpa\ToolRuntime\Gate\GatedToolCalls;
+use Milpa\ToolRuntime\Gate\ToolCallRefused;
 use Milpa\ToolRuntime\Gate\ToolCallGate as GateContract;
 use Milpa\ToolRuntime\Gate\ToolCallRecorder as RecorderContract;
 use Milpa\ToolRuntime\ToolRegistry;
@@ -34,14 +35,14 @@ class McpClientService extends GatedToolCalls
      * @param GateContract|null     $gate     consulted before every call; may refuse it. Without a gate the
      *                                        loop runs as it ran: the absence of a policy cannot be a new policy
      * @param RecorderContract|null $recorder told after, with what the tool answered
-     * @param OptionTable|null      $mesa     which options are still on the table. Without one the catalogue
+     * @param OptionTable|null      $table    which options are still on the table. Without one the catalogue
      *                                        is the whole registry, which is how it ran before
      */
     public function __construct(
         ToolRegistry $internalRegistry,
         ?GateContract $gate = null,
         ?RecorderContract $recorder = null,
-        private readonly ?OptionTable $mesa = null,
+        private readonly ?OptionTable $table = null,
     ) {
         parent::__construct($internalRegistry, $gate, $recorder);
     }
@@ -53,12 +54,34 @@ class McpClientService extends GatedToolCalls
      */
     protected function hidden(): array
     {
-        return $this->mesa?->removed() ?? [];
+        return $this->table?->removed() ?? [];
     }
 
     /** A refusal of an option the table already removed is a different fact from one never offered. */
     protected function optionRemoved(string $tool): bool
     {
-        return $this->mesa?->wasRemoved($tool) ?? false;
+        return $this->table?->wasRemoved($tool) ?? false;
+    }
+
+    /**
+     * The refusal leaves this class under this package's name.
+     *
+     * Consumers released against it catch {@see ToolCallRefusedException}; a catch of the base
+     * {@see ToolCallRefused} (greenhouse decisions/0225) catches this too. Message and `optionRemoved`
+     * travel unchanged — a governed pause must not turn into a plain step failure because the class moved.
+     *
+     * @param array<string, mixed> $args
+     */
+    public function callTool(string $name, array $args): mixed
+    {
+        try {
+            return parent::callTool($name, $args);
+        } catch (ToolCallRefused $refused) {
+            if ($refused instanceof ToolCallRefusedException) {
+                throw $refused;
+            }
+
+            throw new ToolCallRefusedException($refused->getMessage(), $refused->optionRemoved);
+        }
     }
 }
