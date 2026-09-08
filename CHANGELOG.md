@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/getmilpa/ai-gateway/compare/v0.22.1...v0.22.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* what the adversarial review of the gate move confirmed here ([#62](https://github.com/getmilpa/ai-gateway/issues/62)) ([0dd1846](https://github.com/getmilpa/ai-gateway/commit/0dd1846eb336dd656bef5241e5f8070a0242eacf))
+
 ## [0.22.1](https://github.com/getmilpa/ai-gateway/compare/v0.22.0...v0.22.1) (2026-09-08)
 
 
