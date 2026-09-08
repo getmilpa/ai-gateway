@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.1](https://github.com/getmilpa/ai-gateway/compare/v0.22.0...v0.22.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* the second opinion's floor is documented on the base gate too ([#60](https://github.com/getmilpa/ai-gateway/issues/60)) ([e910d6d](https://github.com/getmilpa/ai-gateway/commit/e910d6de23fd9650ddf4363813089703fda68103))
+
 ## [0.22.0](https://github.com/getmilpa/ai-gateway/compare/v0.21.0...v0.22.0) (2026-09-08)
 
 
