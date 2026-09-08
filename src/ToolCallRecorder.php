@@ -15,14 +15,14 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 /**
- * The contract {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallRecorder} — told after every tool call, with what the tool answered — kept under this
+ * The contract {@see \Milpa\ToolRuntime\Gate\ToolCallRecorder} — told after every tool call, with what the tool answered — kept under this
  * name for whoever implemented it here.
  *
  * The question moved down to milpa/tool-runtime, where every caller of tools already depends (greenhouse
  * decisions/0225): a model is one caller, a governed door another. An implementer of THIS interface is still
- * a gate wherever the base is asked for; new code implements the base directly.
+ * a recorder wherever the base is asked for; new code implements the base directly.
  *
- * @deprecated implement {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallRecorder} instead
+ * @deprecated implement {@see \Milpa\ToolRuntime\Gate\ToolCallRecorder} instead
  */
 interface ToolCallRecorder extends \Milpa\ToolRuntime\Gate\ToolCallRecorder
 {

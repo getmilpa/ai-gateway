@@ -95,30 +95,37 @@ responsible for the confirm/cancel round trip on the next user turn.
 ## Stopping the loop before it acts: `ToolCallGate`
 
 The loop above executes what the model asked for. `ToolCallGate` is the seam that lets somebody
-decide **before** it does:
+else decide, before each call, whether it proceeds — and `ToolCallRecorder` is told after, with what
+the tool answered. Both contracts live in `milpa/tool-runtime` (`Milpa\ToolRuntime\Gate`), where
+every caller of tools already depends: a model is one caller, a governed door opened by a human is
+another, and both ask the same question (greenhouse decisions/0225). This package keeps the two names
+as interfaces that extend the base, so whoever implemented them here is still a gate or a recorder
+wherever the base is asked for.
 
 ```php
+use Milpa\ToolRuntime\Gate\ToolCallGate;
+use Milpa\ToolRuntime\Gate\ToolCallRecorder;
+
 interface ToolCallGate
 {
     // The reason this call does not proceed, or null if it does.
     public function refuse(string $tool, array $arguments): ?string;
-    public function record(string $tool, array $arguments, array $result): void;
+}
+
+interface ToolCallRecorder
+{
+    // Told after the call, with the rendered result and whether it succeeded.
+    public function recorded(string $tool, array $arguments, string $result, bool $ok): void;
 }
 ```
 
-`refuse()` runs before the call and `record()` after it. The two halves are not symmetric on
-purpose: the gate sees the **intention**, and the record sees the **outcome**, and resuming a long
-session needs both — with only the intention, an agent picking up where it left off knows what its
-past self was going to try but not whether it worked, so it repeats work already done or work that
-already failed.
-
-The gate is an interface here and nothing else: this package brings no policy of its own. Who may
-run what, and whether a human is asked first, belongs to whoever holds the session — `milpa/agent`
-implements exactly this seam with `SessionPolicy`, per-session permissions and human questions that
-survive the process.
-
-A gate that refuses returns the reason as a string, not a boolean. Whoever receives the refusal
-needs to know *why* in order to do something about it, and that information was already there.
+`refuse()` runs before the call and `recorded()` after it. The two halves are not symmetric on
+purpose: refusing is about INTENTION (what the caller is about to do), recording is about OUTCOME
+(what happened). A refusal is not a tool error: `McpClientService::callTool()` throws
+`ToolCallRefusedException` (which extends tool-runtime's `ToolCallRefused`) and the orchestrator
+catches it apart, before any generic catch, and ends the turn. The gate is an interface here and
+nothing else: this package brings no policy of its own — `milpa/app-runtime` implements it with the
+session's permissions, the autonomy mode and the signatures.
 
 ## The table: `OptionTable`
 

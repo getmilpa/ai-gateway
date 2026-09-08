@@ -16,9 +16,11 @@ namespace Milpa\AiGateway\Tests;
 use Milpa\AiGateway\McpClientService;
 use Milpa\AiGateway\OptionTable;
 use Milpa\AiGateway\ToolCallGate as AliasGate;
+use Milpa\AiGateway\ToolCallRecorder as AliasRecorder;
 use Milpa\AiGateway\ToolCallRefusedException;
 use Milpa\ToolRuntime\Gate\GatedToolCalls;
 use Milpa\ToolRuntime\Gate\ToolCallGate;
+use Milpa\ToolRuntime\Gate\ToolCallRecorder;
 use Milpa\ToolRuntime\Gate\ToolCallRefused;
 use Milpa\ToolRuntime\ToolRegistry;
 use Milpa\ToolRuntime\ToolResult;
@@ -59,7 +61,38 @@ final class TheGateComesFromToolRuntimeTest extends TestCase
         } catch (ToolCallRefused $refused) {
             self::assertSame('not now', $refused->getMessage());
             self::assertFalse($refused->optionRemoved);
+            // UNDER THIS PACKAGE'S NAME: a consumer released against `ToolCallRefusedException` keeps catching
+            // what it always caught — a governed pause must not become a plain step failure because the class
+            // changed package (found by the adversarial review of decisions/0225).
+            self::assertInstanceOf(ToolCallRefusedException::class, $refused);
         }
+        try {
+            $client->callTool('echo', []);
+            self::fail('refused');
+        } catch (ToolCallRefusedException $kept) {
+            self::assertSame('not now', $kept->getMessage());
+        }
+    }
+
+    public function testAnImplementerOfTheKeptRecorderNameIsStillARecorderAndIsToldOnce(): void
+    {
+        $told = [];
+        $legacy = new class ($told) implements AliasRecorder {
+            /** @param list<string> $told */
+            public function __construct(private array &$told)
+            {
+            }
+
+            public function recorded(string $tool, array $arguments, string $result, bool $ok): void
+            {
+                $this->told[] = $tool . ':' . $result . ':' . var_export($ok, true);
+            }
+        };
+        self::assertInstanceOf(ToolCallRecorder::class, $legacy);
+
+        $client = new McpClientService($this->registry(), null, $legacy);
+        self::assertSame('back', $client->callTool('echo', []));
+        self::assertSame(['echo:back:true'], $told, 'told once, after, with the rendered result');
     }
 
     public function testAnImplementerOfTheKeptNameIsStillAGateWhereTheBaseIsAskedFor(): void
