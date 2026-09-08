@@ -19,7 +19,7 @@ use PHPUnit\Framework\TestCase;
 use Milpa\AiGateway\McpClientService;
 use Milpa\AiGateway\ToolCallGate;
 use Milpa\AiGateway\ToolCallRecorder;
-use Milpa\AiGateway\ToolCallRefusedException;
+use Milpa\ToolRuntime\Gate\ToolCallRefused;
 use Milpa\ToolRuntime\ToolRegistry;
 use Milpa\ToolRuntime\Contracts\ToolContext;
 use Psr\Log\LoggerInterface;
@@ -248,7 +248,7 @@ class McpClientServiceTest extends TestCase
         try {
             $cliente->callTool('make', ['what' => 'entity']);
             $this->fail('una llamada negada tiene que lanzar');
-        } catch (ToolCallRefusedException $e) {
+        } catch (ToolCallRefused $e) {
             $this->assertStringContainsString('necesita permiso', $e->getMessage());
         }
 
@@ -373,7 +373,7 @@ class McpClientServiceTest extends TestCase
 
         try {
             $cliente->callTool('make', []);
-        } catch (ToolCallRefusedException) {
+        } catch (ToolCallRefused) {
             // se espera
         }
 

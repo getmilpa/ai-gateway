@@ -15,7 +15,7 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 /**
- * Una {@see ToolCallGate} negó esta llamada.
+ * Una {@see ToolCallGate} negó esta llamada. Kept under this name: {@see \Milpa\ToolRuntime\Gate\ToolCallRefused} is what the gated calls throw, and catching the base catches this too (greenhouse decisions/0225).
  *
  * Es un tipo propio y no una `\Exception` cualquiera porque el orquestador tiene que poder
  * DISTINGUIRLA: cualquier otra excepción de una herramienta se le devuelve al modelo como texto y el
@@ -40,14 +40,6 @@ namespace Milpa\AiGateway;
  * ofrecida; cuando ya no está en el catálogo, no hay nada que rodear. El riel no le pide al operador
  * que no tome el camino: hace que ese camino no exista.
  */
-final class ToolCallRefusedException extends \RuntimeException
+final class ToolCallRefusedException extends \Milpa\ToolRuntime\Gate\ToolCallRefused
 {
-    /**
-     * @param bool $optionRemoved si además de negar, la opción se retiró de la mesa — y entonces el
-     *                            bucle puede seguir, porque el modelo ya no la tiene enfrente
-     */
-    public function __construct(string $message, public readonly bool $optionRemoved = false)
-    {
-        parent::__construct($message);
-    }
 }

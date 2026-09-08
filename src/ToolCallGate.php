@@ -15,35 +15,15 @@ declare(strict_types=1);
 namespace Milpa\AiGateway;
 
 /**
- * Se consulta ANTES de cada llamada a herramienta, y puede negarla.
+ * The contract {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallGate} — consulted before every tool call; it may refuse it — kept under this
+ * name for whoever implemented it here.
  *
- * ── POR QUÉ EXISTE, Y POR QUÉ ES UNA INTERFAZ VACÍA DE POLÍTICA ─────────────────────────────────
+ * The question moved down to milpa/tool-runtime, where every caller of tools already depends (greenhouse
+ * decisions/0225): a model is one caller, a governed door another. An implementer of THIS interface is still
+ * a gate wherever the base is asked for; new code implements the base directly.
  *
- * Este paquete sabe hablarle a un modelo y alternar con herramientas. NO sabe —ni tiene por qué— qué
- * es una sesión, un permiso, un modo de autonomía o una firma. Eso vive en `milpa/agent` y en
- * `milpa/tool-runtime`, y meterlo aquí ataría el transporte a una política concreta.
- *
- * Entonces el bucle pregunta y obedece: quien quiera decidir implementa esto. Sin compuerta cableada,
- * el bucle corre exactamente como corría — la ausencia de política no puede ser una política nueva.
- *
- * ── NEGAR DETIENE EL BUCLE ──────────────────────────────────────────────────────────────────────
- *
- * Una negativa NO es un error de herramienta. Si se le devolviera al modelo como texto —que es lo que
- * pasa con cualquier excepción— el modelo leería «no puedes hacer eso» y probaría otra cosa: exactamente
- * lo que no se quiere de una compuerta. Por eso {@see McpClientService} lanza
- * {@see ToolCallRefusedException} y el orquestador la atrapa aparte, ANTES del catch genérico, y
- * termina la vuelta. La compuerta detiene; no sugiere.
+ * @deprecated implement {@see \\Milpa\\ToolRuntime\\Gate\\ToolCallGate} instead
  */
-interface ToolCallGate
+interface ToolCallGate extends \Milpa\ToolRuntime\Gate\ToolCallGate
 {
-    /**
-     * El motivo por el que esta llamada no procede, o `null` si procede.
-     *
-     * Devuelve el MOTIVO y no un booleano por lo mismo que el resto de esta familia: quien niega sabe
-     * por qué, y quien recibe la negativa necesita esa frase para hacer algo con ella. Un `false` deja
-     * a quien llamó inventando la explicación.
-     *
-     * @param array<string, mixed> $arguments
-     */
-    public function refuse(string $tool, array $arguments): ?string;
 }
