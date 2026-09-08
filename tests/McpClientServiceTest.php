@@ -114,22 +114,6 @@ class McpClientServiceTest extends TestCase
         $this->mcpClient->callTool('nonexistent', []);
     }
 
-    public function testSetContext(): void
-    {
-        $ctx = new ToolContext(
-            principal: 'user:456',
-            channel: 'telegram',
-            scopes: ['read', 'write']
-        );
-
-        $this->mcpClient->setContext($ctx);
-
-    }
-
-    public function testGetContextInitiallyNull(): void
-    {
-    }
-
     public function testCallToolUsesContext(): void
     {
         $capturedCtx = null;
