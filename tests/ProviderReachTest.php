@@ -40,7 +40,6 @@ final class ProviderReachTest extends TestCase
         self::assertTrue($reach->reached());
         self::assertSame(['qwen3.8-27b', 'llama3.2:3b'], $reach->models(), 'ids, in the order offered');
         self::assertTrue($reach->offersDeclared());
-        self::assertSame('http://provider.test:11438', $reach->endpoint());
     }
 
     /**

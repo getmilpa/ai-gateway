@@ -95,12 +95,6 @@ final class ProviderReach
         $this->fetch = $fetch ?? self::httpFetcher();
     }
 
-    /** The endpoint this probe knocked on, normalised — what a person needs to see when it fails. */
-    public function endpoint(): string
-    {
-        return $this->root;
-    }
-
     /**
      * Whether anything answered the catalogue door with a readable JSON object.
      *
