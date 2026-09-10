@@ -149,12 +149,6 @@ final class ProviderReach
         return \in_array($this->declared, $this->offered, true);
     }
 
-    /** The model this house declared, as it was handed in. */
-    public function declared(): string
-    {
-        return $this->declared;
-    }
-
     /** Asked once per instance: a surface that paints twice must not knock twice. */
     private function ask(): void
     {
