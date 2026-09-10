@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/getmilpa/ai-gateway/compare/v0.23.0...v0.24.0) (2026-09-10)
+
+
+### Features
+
+* the house asks whether a model answers, instead of reading what config claims ([#67](https://github.com/getmilpa/ai-gateway/issues/67)) ([dd5d378](https://github.com/getmilpa/ai-gateway/commit/dd5d378d4b2ac670e479303ab051047051820aec))
+
 ## [0.23.0](https://github.com/getmilpa/ai-gateway/compare/v0.22.2...v0.23.0) (2026-09-08)
 
 
