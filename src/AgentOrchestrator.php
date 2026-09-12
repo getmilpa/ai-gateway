@@ -1060,6 +1060,9 @@ class AgentOrchestrator
 
                     try {
                         $retry = $this->llm->generateResponse($prompt, $tools, $paraElReintento);
+                    } catch (OutputTruncatedException $e) {
+                        // A known incomplete retry cannot turn into a natural final answer.
+                        throw $e;
                     } catch (\Throwable $e) {
                         // The guard must never make things worse: a retry that dies leaves the
                         // degenerate-but-honest original standing instead of killing the run.

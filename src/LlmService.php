@@ -157,17 +157,26 @@ class LlmService implements LlmServiceInterface
      * return a single OpenAI-shaped assistant message, translating request and
      * response tool-call formats to and from Anthropic's shape when needed.
      *
-     * @param list<array<string, mixed>> $tools    Tool summaries in MCP/OpenAI shape
-     *                                             (`name`, `description`, `inputSchema`)
-     * @param list<array<string, mixed>> $messages Full conversation so far; when empty,
-     *                                             a single `user` message is built from
-     *                                             `$prompt`
+     * @param list<array<string, mixed>> $tools     Tool summaries in MCP/OpenAI shape
+     *                                              (`name`, `description`, `inputSchema`)
+     * @param list<array<string, mixed>> $messages  Full conversation so far; when empty,
+     *                                              a single `user` message is built from
+     *                                              `$prompt`
+     * @param int                        $maxTokens Positive output-token limit sent to either provider.
      *
      * @return array<string, mixed> An OpenAI-shaped assistant message (`role`, `content`,
      *                              and optionally `tool_calls`)
+     *
+     * @throws OutputTruncatedException  When the provider declares an incomplete response.
+     * @throws ContextExceededException  When the provider rejects an oversized input context.
+     * @throws \RuntimeException         On provider or transport failures.
+     * @throws \InvalidArgumentException When the requested limit is not positive.
      */
     public function generateResponse(string $prompt, array $tools = [], array $messages = [], int $maxTokens = 4096): array
     {
+        if ($maxTokens < 1) {
+            throw new \InvalidArgumentException('maxTokens must be positive.');
+        }
         if (empty($messages)) {
             $messages = [
                 ['role' => 'user', 'content' => $prompt],
@@ -178,7 +187,7 @@ class LlmService implements LlmServiceInterface
             return $this->callAnthropic($tools, $messages, $maxTokens);
         }
 
-        return $this->callOpenAi($tools, $messages);
+        return $this->callOpenAi($tools, $messages, $maxTokens);
     }
 
     /**
@@ -187,11 +196,12 @@ class LlmService implements LlmServiceInterface
      *
      * @return array<string, mixed>
      */
-    private function callOpenAi(array $tools, array $messages): array
+    private function callOpenAi(array $tools, array $messages, int $maxTokens): array
     {
         $payload = [
             'model' => $this->model,
             'messages' => $messages,
+            'max_completion_tokens' => $maxTokens,
         ];
 
         if (!empty($tools)) {
@@ -231,8 +241,12 @@ class LlmService implements LlmServiceInterface
 
                 $streamUsage = null;
                 $streamUri = $this->uri('https://api.openai.com', '/v1/chat/completions');
-                $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage);
+                $finishReason = null;
+                $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage, $finishReason);
                 $this->emitReturn($streamUri, $streamUsage);
+                if ($finishReason === 'length') {
+                    throw new OutputTruncatedException('openai', $maxTokens);
+                }
                 $this->emitReasoning($streamUri, $streamMessage);
 
                 if ($transportRetried) {
@@ -243,6 +257,8 @@ class LlmService implements LlmServiceInterface
                 }
 
                 return $streamMessage;
+            } catch (OutputTruncatedException $e) {
+                throw $e;
             } catch (TransportRetryExhaustedException $e) {
                 // Already carries the provider prefix AND the attempt count; wrapping it again
                 // would stutter the prefix and bury the count.
@@ -273,6 +289,9 @@ class LlmService implements LlmServiceInterface
 
             $body = json_decode((string) $response->getBody(), true);
             $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+            if (($body['choices'][0]['finish_reason'] ?? null) === 'length') {
+                throw new OutputTruncatedException('openai', $maxTokens);
+            }
             $message = \is_array($body) ? ($body['choices'][0]['message'] ?? []) : [];
             $this->emitReasoning($openAiUri, \is_array($message) ? $message : []);
 
@@ -299,23 +318,25 @@ class LlmService implements LlmServiceInterface
      * buffered path returns. Tool-call fragments are grouped by their `index`: `function.name`
      * arrives once, `function.arguments` in pieces to concatenate.
      *
-     * @param \Closure(string, string=): void $onChunk Fired per delta: `(piece, kind)` where kind is
-     *                                                 'content' (the answer) or 'reasoning' (the thinking).
-     * @param array<string, mixed>|null       $usage   Out-param: the provider's own usage block from the
-     *                                                 final chunk, when one carried it, else left null.
+     * @param \Closure(string, string=): void $onChunk      Fired per delta: `(piece, kind)` where kind is
+     *                                                      'content' (the answer) or 'reasoning' (the thinking).
+     * @param array<string, mixed>|null       $usage        Out-param: the provider's own usage block from the
+     *                                                      final chunk, when one carried it, else left null.
+     * @param string|null                     $finishReason Out-param: the final choice reason, never overwritten by usage-only chunks.
      *
      * @return array<string, mixed>
      */
-    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk, ?array &$usage = null): array
+    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk, ?array &$usage = null, ?string &$finishReason = null): array
     {
         $usage = null;
+        $finishReason = null;
         $content = '';
         $reasoning = '';
         /** @var array<int, array{id: string, type: string, function: array{name: string, arguments: string}}> $toolCalls */
         $toolCalls = [];
         $buffer = '';
 
-        $handle = static function (string $line) use (&$content, &$reasoning, &$toolCalls, &$usage, $onChunk): void {
+        $handle = static function (string $line) use (&$content, &$reasoning, &$toolCalls, &$usage, &$finishReason, $onChunk): void {
             if (!str_starts_with($line, 'data:')) {
                 return; // comments (':' keep-alive) and blank separators
             }
@@ -332,6 +353,9 @@ class LlmService implements LlmServiceInterface
             // reaches here before the delta guard would drop it for having no delta.
             if (isset($json['usage']) && \is_array($json['usage'])) {
                 $usage = $json['usage'];
+            }
+            if (\is_string($json['choices'][0]['finish_reason'] ?? null)) {
+                $finishReason = $json['choices'][0]['finish_reason'];
             }
 
             $delta = $json['choices'][0]['delta'] ?? null;
@@ -484,6 +508,11 @@ class LlmService implements LlmServiceInterface
 
             $rawBody = (string) $response->getBody();
             $body = json_decode($rawBody, true);
+            $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+            $stopReason = $body['stop_reason'] ?? null;
+            if ($stopReason === 'max_tokens' || $stopReason === 'model_context_window_exceeded') {
+                throw new OutputTruncatedException('anthropic', $maxTokens, $stopReason);
+            }
 
             // DEBUG: Log raw Anthropic response
             $this->log("RAW ANTHROPIC RESPONSE: " . substr($rawBody, 0, 5000));
@@ -525,8 +554,6 @@ class LlmService implements LlmServiceInterface
             if ($flakeRetried) {
                 $message['provider_flake_retried'] = true;
             }
-
-            $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
 
             return $message;
 
