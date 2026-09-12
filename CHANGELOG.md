@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.3](https://github.com/getmilpa/ai-gateway/compare/v0.24.2...v0.24.3) (2026-09-12)
+
+
+### Bug Fixes
+
+* retain bounded semantic recovery ([837a687](https://github.com/getmilpa/ai-gateway/commit/837a6870f1b8071622eaa046eda76af4c9fec704))
+* retain bounded semantic recovery (greenhouse 0343) ([c876437](https://github.com/getmilpa/ai-gateway/commit/c8764370c24b4b8c4c7585be38ae8eb06ed9258c))
+
 ## [0.24.2](https://github.com/getmilpa/ai-gateway/compare/v0.24.1...v0.24.2) (2026-09-12)
 
 
