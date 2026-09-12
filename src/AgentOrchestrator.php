@@ -38,9 +38,9 @@ class AgentOrchestrator
     public const STEPS_EXHAUSTED = 'Error: Maximum agent steps reached.';
 
     /**
-     * What a leg returns when the forced choice was put in front of the model and the model chose
-     * none of its options — no tool call, no {@see self::HOUSE_DEBT_MARKER}, no
-     * {@see self::ABANDON_MARKER} (greenhouse decisions/0185).
+     * What a leg returns when the forced choice was not met or its measured recovery exhausted
+     * without growth (greenhouse decisions/0185 and 0343). Preparation alone is not completion;
+     * {@see self::HOUSE_DEBT_MARKER} and {@see self::ABANDON_MARKER} retain their explicit exits.
      *
      * Like {@see self::STEPS_EXHAUSTED}, it is not an answer and must not be painted as one; it is
      * public so a surface recognizes it without repeating the literal. The line after the sentinel
@@ -569,20 +569,19 @@ class AgentOrchestrator
     }
 
     /**
-     * Asks the probe whether the completed step left the run stalled, normalizing its answer to
-     * the notice-and-receipt pair the loop carries — or `null` when there is no probe, no opinion,
-     * no stall, or no usable notice.
+     * Observe progress without interpreting silence or tool success as recovery (0343/0660).
+     * Legacy probes retain their one-answer notice contract. An explicit pending recovery is
+     * retained through absent or failed observations, and only its producer can clear or exhaust it.
      *
-     * A probe is an OBSERVATION channel, and an observation must never break the observed run: a
-     * probe that throws is logged and treated as silence, the same doctrine the step callback
-     * already follows.
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null $pending
      *
-     * @return array{notice: string, receipt: array<string, mixed>}|null
+     * @return array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null
      */
-    private function consultProgressProbe(int $step): ?array
+    private function consultProgressProbe(int $step, ?array $pending = null): ?array
     {
+        $fallback = ($pending['recovery'] ?? null) === 'pending' ? $pending : null;
         if ($this->progressProbe === null) {
-            return null;
+            return $fallback;
         }
 
         try {
@@ -590,14 +589,36 @@ class AgentOrchestrator
         } catch (\Throwable $e) {
             $this->log("Step $step: progress probe failed ({$e->getMessage()}) — treated as no opinion");
 
-            return null;
+            return $fallback;
         }
 
+        if ($answer !== null && ($answer['recovery'] ?? null) === 'recovered' && $answer['stalled'] === false) {
+            return null;
+        }
         if ($answer === null || $answer['stalled'] !== true || trim($answer['notice']) === '') {
-            return null;
+            return $fallback;
         }
 
-        return ['notice' => $answer['notice'], 'receipt' => $answer['receipt']];
+        $state = match ($answer['recovery'] ?? null) {
+            'pending' => ['recovery' => 'pending'],
+            'exhausted' => ['recovery' => 'exhausted'],
+            default => [],
+        };
+
+        return ['notice' => $answer['notice'], 'receipt' => $answer['receipt']] + $state;
+    }
+
+    /**
+     * Return the existing stalled sentinel with the producer's latest receipt, never a new count.
+     *
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'} $stall
+     */
+    private function stalledResult(array $stall): string
+    {
+        return self::PROGRESS_STALLED . "\n" . json_encode(
+            ['receipt' => $stall['receipt']],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
     }
 
     private function renderToolResult(ToolResult $result): string
@@ -711,8 +732,9 @@ class AgentOrchestrator
 
         // THE FORCED CHOICE'S STATE (greenhouse decisions/0185): when the probe answers stalled,
         // the notice rides the NEXT call as one appended user-role steering line and the answer to it is held
-        // to the choice — act, declare debt, abandon, or the leg ends. `null` when nothing is due.
-        /** @var array{notice: string, receipt: array<string, mixed>}|null $pendingStall */
+        // to the choice — act, declare debt, abandon, or the leg ends. Explicit recovery persists
+        // across preparation; a legacy notice still covers one answer. `null` when nothing is due.
+        /** @var array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null $pendingStall */
         $pendingStall = null;
 
         for ($i = 0; $i < $this->maxSteps; $i++) {
@@ -773,7 +795,7 @@ class AgentOrchestrator
             // verdicts about windows that already closed. `$noticeThisCall` remembers that THIS
             // step's answer is the one held to the forced choice.
             $noticeThisCall = $pendingStall;
-            $pendingStall = null;
+            $pendingStall = ($noticeThisCall['recovery'] ?? null) === 'pending' ? $noticeThisCall : null;
             if ($noticeThisCall !== null) {
                 // USER role, not system: provider chat templates reject a system message that is not
                 // at the beginning — qwen's Jinja raises \"System message must be at the beginning\"
@@ -979,9 +1001,12 @@ class AgentOrchestrator
                     ];
                 }
 
-                // A completed step: the probe measures what the stream can prove grew. A response
-                // WITH tool calls always proceeds — acting IS option A of the forced choice.
-                $pendingStall = $this->consultProgressProbe($i);
+                // The producer judges the completed step. Preparation may continue, but calling
+                // a tool cannot clear a measured recovery or postpone its exhausted window.
+                $pendingStall = $this->consultProgressProbe($i, $pendingStall);
+                if (($pendingStall['recovery'] ?? null) === 'exhausted') {
+                    return $this->stalledResult($pendingStall);
+                }
                 // Loop continues to let LLM process tool output
             } else {
                 // No tool call, final response
@@ -1016,7 +1041,10 @@ class AgentOrchestrator
                         // is already in `$messages`, where it belongs — history keeps what was
                         // abandoned — and the loop continues under the same measurement.
                         $this->log("Step $i: hypothesis abandoned — the loop continues");
-                        $pendingStall = $this->consultProgressProbe($i);
+                        $pendingStall = $this->consultProgressProbe($i, $pendingStall);
+                        if (($pendingStall['recovery'] ?? null) === 'exhausted') {
+                            return $this->stalledResult($pendingStall);
+                        }
 
                         continue;
                     }
@@ -1026,10 +1054,7 @@ class AgentOrchestrator
                     // surface can show why.
                     $this->log("Step $i: post-notice answer took none of the forced options — leg ends stalled");
 
-                    return self::PROGRESS_STALLED . "\n" . json_encode(
-                        ['receipt' => $noticeThisCall['receipt']],
-                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                    );
+                    return $this->stalledResult($noticeThisCall);
                 }
 
                 // ── A DEGENERATE ANSWER GETS ONE GUIDED RETRY ───────────────────────────────────

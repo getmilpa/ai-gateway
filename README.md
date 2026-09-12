@@ -41,6 +41,16 @@ An empty catalogue exposes no discovery tool. The default full catalogue is unch
 composer require milpa/ai-gateway
 ```
 
+## Semantic recovery
+
+An optional `ProgressProbe` owns the evidence and the recovery window. Its additive `recovery`
+field reports `pending`, `recovered`, or `exhausted`. Pending recovery survives successful tool
+calls and missing observations; only measured recovery clears it. Exhaustion returns
+`AgentOrchestrator::PROGRESS_STALLED` with the producer's receipt before another model call.
+Preparation can therefore lead to real work without making repeated bookkeeping count as work.
+The total step budget remains in force. Probes omitting the field keep their previous behavior;
+confirmation, debt and abandonment retain their exits, and abandonment does not reset recovery.
+
 ## Quick example
 
 Register a tool on a `ToolRegistry` (from `milpa/tool-runtime`), wrap it in `McpClientService`,
