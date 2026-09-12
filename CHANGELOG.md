@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.2](https://github.com/getmilpa/ai-gateway/compare/v0.24.1...v0.24.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* expose complete schemas for callable lazy tools ([c9b6aca](https://github.com/getmilpa/ai-gateway/commit/c9b6acab05d0b51d47d1bc510164493fdf566173))
+* expose complete schemas for callable lazy tools ([9c0cbfb](https://github.com/getmilpa/ai-gateway/commit/9c0cbfb6d6fc734b114d751bbcafc4b8fd9ab1e1))
+
 ## [0.24.1](https://github.com/getmilpa/ai-gateway/compare/v0.24.0...v0.24.1) (2026-09-12)
 
 
