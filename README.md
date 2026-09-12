@@ -92,6 +92,15 @@ If a tool result requires confirmation or is blocked by policy, the loop stops i
 returns that outcome instead of continuing — the caller (a chat handler, a CLI, a bot) is
 responsible for the confirm/cancel round trip on the next user turn.
 
+`generateResponse(maxTokens: 4096)` requires a positive output limit. It sends
+`max_completion_tokens` to OpenAI-compatible endpoints and `max_tokens` to Anthropic.
+When the provider reports output truncation (`length` / `max_tokens`), buffered and SSE
+responses throw `OutputTruncatedException` before any tool call from that response can execute.
+Anthropic's `model_context_window_exceeded` is also treated as truncation. The exception exposes
+`provider`, `stopReason` and the requested `maxTokens`; it does not expose partial tool
+arguments. Usage is still observed. There is no automatic retry, including during the guided
+retry of a degenerate answer. Previously completed steps remain completed.
+
 ## Stopping the loop before it acts: `ToolCallGate`
 
 The loop above executes what the model asked for. `ToolCallGate` is the seam that lets somebody
