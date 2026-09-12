@@ -31,6 +31,12 @@ Telegram/HTTP-specific code** — those live in your host application.
 
 ## Install
 
+With `AgentOrchestrator(lazyTools: true)`, `describe_tool` lists discoverable names and
+descriptions. Describing a tool makes it callable with its full input schema on subsequent
+requests. Undiscovered tools are not advertised as callable empty-object signatures. Discovery
+does not authorize execution: the same tool registry and gates still judge every real call.
+An empty catalogue exposes no discovery tool. The default full catalogue is unchanged.
+
 ```bash
 composer require milpa/ai-gateway
 ```

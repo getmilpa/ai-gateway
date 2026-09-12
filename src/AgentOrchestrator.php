@@ -619,10 +619,9 @@ class AgentOrchestrator
      * @param callable|null              $onStep       Optional callback called at each step: fn(int $step, string $status) => void
      */
     /**
-     * Lean the catalogue for the toolbox: every tool becomes name + description with an empty schema,
-     * except the ones the model has already described (their full schema stays), plus a `describe_tool`
-     * meta-tool that serves any tool's schema on demand. This is what keeps 43 full schemas off every
-     * request — the model pulls the one it needs (greenhouse evidence/0436).
+     * Offer callable tools only with their complete schemas. Undiscovered names and descriptions
+     * live on the discovery door, never as executable empty-object signatures (greenhouse 0335).
+     * The model pulls a schema once; it remains callable on later requests.
      *
      * @param list<array<string, mixed>> $full     the app's full tool summaries (name, description, inputSchema)
      * @param list<string>               $unlocked names the model has described this run
@@ -631,23 +630,22 @@ class AgentOrchestrator
      */
     private function lazyCatalogue(array $full, array $unlocked): array
     {
+        if ($full === []) {
+            return [];
+        }
         $lean = [];
+        $discoverable = [];
         foreach ($full as $tool) {
             $name = (string) ($tool['name'] ?? '');
+            $discoverable[] = $name . ': ' . (string) ($tool['description'] ?? '');
             if (in_array($name, $unlocked, true)) {
                 $lean[] = $tool;
-
-                continue;
             }
-            $lean[] = [
-                'name' => $name,
-                'description' => (string) ($tool['description'] ?? ''),
-                'inputSchema' => ['type' => 'object', 'properties' => (object) []],
-            ];
         }
         $lean[] = [
             'name' => 'describe_tool',
-            'description' => 'Return the full input schema of a tool by name. Call this before using a tool whose parameters you do not know.',
+            'description' => "Return the full input schema of a tool by name and make it callable. Discoverable tools:\n"
+                . implode("\n", $discoverable),
             'inputSchema' => [
                 'type' => 'object',
                 'properties' => ['name' => ['type' => 'string', 'description' => 'the tool to describe']],
@@ -682,13 +680,12 @@ class AgentOrchestrator
             $systemPrompt .= " IMPORTANT: You must use tools to answer this request to ensure up-to-date data. Do not rely on previous context.";
         }
 
-        // The toolbox: tools arrive as name + description only, so 43 full schemas do not ride every
-        // request. The model asks for a tool's parameters on demand, and a tool it touches without its
-        // schema is auto-described (the system resolves it) rather than failing.
+        // Discovery carries names and descriptions; execution always carries the full schema.
+        // The defensive auto-describe still handles calls outside the offered catalogue.
         if ($this->lazyTools) {
-            $systemPrompt .= "\n\nTOOLBOX: each tool is listed by name and description only. Before you call "
-                . "a tool whose parameters you do not know, call `describe_tool` with its name to get its "
-                . "input schema, then call the tool with the arguments the schema declares.";
+            $systemPrompt .= "\n\nTOOLBOX: `describe_tool` lists discoverable tool names and descriptions. "
+                . "Call it with a tool's name to obtain its full input schema and make the tool callable. "
+                . "Then call that tool with the arguments its schema declares.";
         }
 
         // Build initial messages array: System -> History -> Current User Prompt
