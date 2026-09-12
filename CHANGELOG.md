@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.1](https://github.com/getmilpa/ai-gateway/compare/v0.24.0...v0.24.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* honor output limits and reject truncated completions ([6dc89cf](https://github.com/getmilpa/ai-gateway/commit/6dc89cf09c984c6c7a7ac176112e197bf15f0eb9))
+* honor output limits and reject truncated completions ([2e9cada](https://github.com/getmilpa/ai-gateway/commit/2e9cadad73704d7cfe2868ddb46a6436f4be4969))
+
 ## [0.24.0](https://github.com/getmilpa/ai-gateway/compare/v0.23.0...v0.24.0) (2026-09-10)
 
 
