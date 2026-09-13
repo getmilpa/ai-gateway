@@ -54,6 +54,16 @@ class McpClientService extends GatedToolCalls
      */
     protected function hidden(): array
     {
+        return $this->withdrawn();
+    }
+
+    /**
+     * The table's current removals forbid execution; record-only history does not.
+     *
+     * @return list<string>
+     */
+    protected function withdrawn(): array
+    {
         return $this->table?->removed() ?? [];
     }
 
