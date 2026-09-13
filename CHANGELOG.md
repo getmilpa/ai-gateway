@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.4](https://github.com/getmilpa/ai-gateway/compare/v0.24.3...v0.24.4) (2026-09-13)
+
+
+### Bug Fixes
+
+* enforce active option withdrawal in model tool calls ([a9c4ea2](https://github.com/getmilpa/ai-gateway/commit/a9c4ea2d2f86a62d129f36e2fc59407f01f8a2c4))
+* enforce current withdrawal in model tool calls ([16a723b](https://github.com/getmilpa/ai-gateway/commit/16a723b1946497ae04d79c5426f45d2500d1296d))
+
 ## [0.24.3](https://github.com/getmilpa/ai-gateway/compare/v0.24.2...v0.24.3) (2026-09-12)
 
 
