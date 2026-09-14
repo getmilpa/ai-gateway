@@ -986,7 +986,8 @@ class AgentOrchestrator
                         // Cualquier OTRO fallo sí vuelve al modelo: una herramienta que truena por un
                         // argumento malo es algo que el modelo puede corregir, y devolvérselo es lo que
                         // le permite hacerlo.
-                        $output = "Error executing tool: " . $e->getMessage();
+                        $output = ToolFailureWindow::project($e->getMessage(), $this->toolResultBudget())
+                            ?? "Error executing tool: " . $e->getMessage();
                         $this->log("Step $i: ❌ TOOL ERROR '$functionName': " . $e->getMessage());
                     }
 

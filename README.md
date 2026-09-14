@@ -110,6 +110,17 @@ responsible for the confirm/cancel round trip on the next user turn.
 
 `generateResponse(maxTokens: 4096)` requires a positive output limit. It sends
 `max_completion_tokens` to OpenAI-compatible endpoints and `max_tokens` to Anthropic.
+Oversized structured tool exceptions use a bounded `milpa.tool-failure-window/v1` projection.
+Its outer `ok:false` describes the failed call; `preview` preserves the decoded error where it
+fits, and `partial` plus `omitted` identify removed fields by JSON Pointer, character count and
+SHA-256. `original` identifies the complete error by size and hash. The session recorder keeps
+that original receipt; the projection does not write or replace it. Large object string fields
+may be omitted, while arrays and scalar facts are never rewritten. If the structure still does
+not fit, `preview:null` and a root omission report that it is unavailable. The same applies
+when number spellings cannot survive PHP decoding and encoding unchanged. A preview is not a
+complete receipt or authorization. Short errors, unsupported JSON and successful results keep
+their existing paths; no context or per-result budget is increased.
+
 When the provider reports output truncation (`length` / `max_tokens`), buffered and SSE
 responses throw `OutputTruncatedException` before any tool call from that response can execute.
 Anthropic's `model_context_window_exceeded` is also treated as truncation. The exception exposes
