@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.0](https://github.com/getmilpa/ai-gateway/compare/v0.24.5...v0.25.0) (2026-09-14)
+
+
+### Features
+
+* expose producer-owned run termination ([8610512](https://github.com/getmilpa/ai-gateway/commit/86105123ce9599b025b92eb3b3410bbac3403110))
+* expose producer-owned run termination ([bc0abec](https://github.com/getmilpa/ai-gateway/commit/bc0abec07ea4695b3ef28854cfaf9d4e7d3c8725))
+
 ## [0.24.5](https://github.com/getmilpa/ai-gateway/compare/v0.24.4...v0.24.5) (2026-09-14)
 
 
