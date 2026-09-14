@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.5](https://github.com/getmilpa/ai-gateway/compare/v0.24.4...v0.24.5) (2026-09-14)
+
+
+### Bug Fixes
+
+* preserve structured failures within the model window ([80c1f7c](https://github.com/getmilpa/ai-gateway/commit/80c1f7c76aff9e7462b315aff2988428288d4c06))
+* preserve structured tool failures in the bounded window (greenhouse 0697) ([a036355](https://github.com/getmilpa/ai-gateway/commit/a036355a6c747275e986a5be7eabfc0facb0f8e1))
+
 ## [0.24.4](https://github.com/getmilpa/ai-gateway/compare/v0.24.3...v0.24.4) (2026-09-13)
 
 
