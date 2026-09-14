@@ -152,6 +152,23 @@ class AgentOrchestrator
     private ?ToolContext $toolContext;
     private ?ToolResult $lastToolResult = null;
 
+    private ?RunTermination $termination = null;
+
+    /** The latest base-loop exit; null before a run or while that run is in progress. */
+    public function termination(): ?RunTermination
+    {
+        return $this->termination;
+    }
+
+    /** Record the actual exit branch without changing the existing string result.
+     * @param array<string, mixed>|null $receipt the progress producer's original receipt
+     */
+    private function finish(RunEnd $reason, string $answer, ?array $receipt = null): string
+    {
+        $this->termination = new RunTermination($reason, $receipt);
+        return $answer;
+    }
+
     /** Whether the toolbox serves tool schemas on demand (small-window models) instead of inlining all. */
     private bool $lazyTools;
 
@@ -615,10 +632,10 @@ class AgentOrchestrator
      */
     private function stalledResult(array $stall): string
     {
-        return self::PROGRESS_STALLED . "\n" . json_encode(
+        return $this->finish(RunEnd::ProgressStalled, self::PROGRESS_STALLED . "\n" . json_encode(
             ['receipt' => $stall['receipt']],
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-        );
+        ), $stall['receipt']);
     }
 
     private function renderToolResult(ToolResult $result): string
@@ -683,6 +700,24 @@ class AgentOrchestrator
      * @param list<array<string, mixed>> $history prior turns, each a role/content message
      */
     public function run(string $prompt, string $systemPrompt = 'You are a helpful assistant.', array $history = [], ?callable $onStep = null): string
+    {
+        $this->termination = null;
+        try {
+            return $this->runLoop($prompt, $systemPrompt, $history, $onStep);
+        } catch (\Throwable $error) {
+            $this->termination = new RunTermination(match (true) {
+                $error instanceof RunInterrupted => RunEnd::Interrupted,
+                $error instanceof OutputTruncatedException => RunEnd::OutputTruncated,
+                default => RunEnd::Failed,
+            });
+            throw $error;
+        }
+    }
+
+    /** Execute the existing loop; every returning branch records its own cause.
+     * @param list<array<string, mixed>> $history prior conversation turns
+     */
+    private function runLoop(string $prompt, string $systemPrompt, array $history, ?callable $onStep): string
     {
         // Track tool results to append them to final response
         $toolResults = [];
@@ -922,12 +957,12 @@ class AgentOrchestrator
                             if ($toolResult->requiresConfirmation()) {
                                 $this->log("Step $i: ⚠️ CONFIRMATION REQUIRED - stopping loop");
                                 $rendered = $this->renderToolResult($toolResult);
-                                return $rendered . "\n\n_Responde **CONFIRMAR** para proceder o **CANCELAR** para abortar._";
+                                return $this->finish(RunEnd::ConfirmationRequired, $rendered . "\n\n_Responde **CONFIRMAR** para proceder o **CANCELAR** para abortar._");
                             }
 
                             if ($toolResult->isBlocked()) {
                                 $this->log("Step $i: ⛔ BLOCKED BY RULE - stopping loop");
-                                return $this->renderToolResult($toolResult);
+                                return $this->finish(RunEnd::Blocked, $this->renderToolResult($toolResult));
                             }
 
                             // Render for storage
@@ -954,7 +989,7 @@ class AgentOrchestrator
                             if ($requiresConfirmation) {
                                 $message = is_array($toolResult) ? ($toolResult['message'] ?? '') :
                                     (json_decode($toolResult, true)['message'] ?? $output);
-                                return $message . "\n\n_Responde **CONFIRMAR** para proceder o **CANCELAR** para abortar._";
+                                return $this->finish(RunEnd::ConfirmationRequired, $message . "\n\n_Responde **CONFIRMAR** para proceder o **CANCELAR** para abortar._");
                             }
                         }
 
@@ -977,7 +1012,7 @@ class AgentOrchestrator
                         if (!$e->optionRemoved) {
                             $this->log("Step $i: 🚧 TOOL REFUSED '$functionName': " . $e->getMessage());
 
-                            return $e->getMessage();
+                            return $this->finish(RunEnd::ToolRefused, $e->getMessage());
                         }
 
                         $this->log("Step $i: 🚧➖ OPTION REMOVED '$functionName': " . $e->getMessage());
@@ -1034,7 +1069,7 @@ class AgentOrchestrator
                         // no wrapper — because the caller records the debt from it.
                         $this->log("Step $i: HOUSE_DEBT declared — the leg ends, the caller records it");
 
-                        return \is_string($finalResponse) ? $finalResponse : $declared;
+                        return $this->finish(RunEnd::HouseDebt, \is_string($finalResponse) ? $finalResponse : $declared);
                     }
 
                     if (str_starts_with($declared, self::ABANDON_MARKER)) {
@@ -1123,9 +1158,9 @@ class AgentOrchestrator
                 if ($this->looksLikeAnUnparsedToolCall($finalResponse)) {
                     $this->log("Step {$i}: respuesta descartada — trae una llamada sin parsear");
 
-                    return 'El modelo intentó llamar una herramienta y la escribió como texto en vez de usar '
+                    return $this->finish(RunEnd::InvalidResponse, 'El modelo intentó llamar una herramienta y la escribió como texto en vez de usar '
                         . "el canal de llamadas, así que **no se ejecutó nada**. Nada cambió en esta app.\n\n"
-                        . "Lo que devolvió, tal cual:\n\n```\n" . trim($finalResponse) . "\n```";
+                        . "Lo que devolvió, tal cual:\n\n```\n" . trim($finalResponse) . "\n```");
                 }
 
                 // EL RESULTADO CRUDO YA NO SE ANEXA A LA RESPUESTA.
@@ -1157,7 +1192,7 @@ class AgentOrchestrator
                     $finalResponse = "🔧 " . $finalResponse;
                 }
 
-                return $finalResponse;
+                return $this->finish(RunEnd::FinalAnswer, $finalResponse);
             }
         }
 
@@ -1167,6 +1202,6 @@ class AgentOrchestrator
         // respuesta: el TUI lo pintaba con la voz del agente, como si eso fuera lo que dijo. Se
         // conserva la cadena por compatibilidad y se nombra, para que una superficie pueda
         // reconocerla en vez de compararla contra un literal suyo que puede envejecer aparte.
-        return self::STEPS_EXHAUSTED;
+        return $this->finish(RunEnd::StepsExhausted, self::STEPS_EXHAUSTED);
     }
 }

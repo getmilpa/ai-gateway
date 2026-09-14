@@ -89,6 +89,36 @@ translates the tool list, the message history, and the tool-call response to and
 Anthropic's shape internally, so `AgentOrchestrator` and `McpClientService` never see a
 provider-specific format.
 
+## Run termination
+
+`run(): string` keeps its existing response text and exceptions. After calling the base
+loop, read `$orchestrator->termination()` for the producer's `RunTermination` observation:
+
+```php
+use Milpa\AiGateway\RunEnd;
+
+try {
+    $answer = $orchestrator->run('Inspect the app.');
+} finally {
+    $end = $orchestrator->termination();
+    // $end?->reason === RunEnd::FinalAnswer means the final-answer branch returned.
+    // It does not mean the requested work is complete or approved.
+}
+```
+
+`reason` distinguishes `final_answer`, `tool_refused`, `confirmation_required`, `blocked`,
+`steps_exhausted`, `progress_stalled`, `house_debt`, `invalid_response`, `interrupted`,
+`output_truncated`, and `failed`. For `progress_stalled`, `receipt` carries the probe's original
+receipt. `toArray()` exports both fields. A refusal and a final answer can have identical text;
+the cause comes from the executed branch, never from matching that text.
+
+The observation resets to `null` when each base run begins and is available after a return or
+an exception escapes; the same exception object still propagates. Captured observations retain
+their values when the instance is reused. The getter describes the latest **base-loop** run;
+subclasses that replace `run()` must not present an earlier base-loop observation as a new one.
+Concurrent or reentrant runs on the same orchestrator are not supported. Session questions,
+completion evidence and authorization remain the host's responsibility.
+
 ## The agent loop
 
 `AgentOrchestrator::run()` alternates between two calls until the model is done or
