@@ -304,13 +304,13 @@ class AgentOrchestrator
     {
         $budget = $this->toolResultBudget();
 
-        if (mb_strlen($output) <= $budget) {
+        if (mb_strlen($output, 'UTF-8') <= $budget) {
             return $output;
         }
 
-        $elided = mb_strlen($output) - $budget;
+        $elided = mb_strlen($output, 'UTF-8') - $budget;
 
-        return mb_substr($output, 0, $budget)
+        return mb_substr($output, 0, $budget, 'UTF-8')
             . "\n…[tool result truncated: {$elided} characters elided to fit the model window;"
             . ' the full result is in the session log]';
     }

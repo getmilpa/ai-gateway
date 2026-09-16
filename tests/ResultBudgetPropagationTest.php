@@ -23,6 +23,18 @@ use Psr\Log\NullLogger;
 /** The native call shares the exact JSON ruler used for the following model message. */
 final class ResultBudgetPropagationTest extends TestCase
 {
+    /** A host's global mbstring setting must not change the JSON transport's UTF-8 ruler. */
+    public function testHostEncodingDoesNotChangeTheTransportRuler(): void
+    {
+        $previous = mb_internal_encoding();
+        mb_internal_encoding('ISO-8859-1');
+        try {
+            $this->testProducerReceivesTheActualBudgetAndLegacyCallsDoNot(8192, 6144);
+        } finally {
+            mb_internal_encoding($previous);
+        }
+    }
+
     public static function windows(): iterable
     {
         yield 'large' => [32768, 8000];
