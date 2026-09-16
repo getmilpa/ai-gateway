@@ -18,6 +18,7 @@ namespace Milpa\AiGateway;
 use Psr\Log\LoggerInterface;
 use Milpa\ToolRuntime\Contracts\ToolContext;
 use Milpa\ToolRuntime\Gate\GatedToolCalls;
+use Milpa\ToolRuntime\Contracts\ResultBudget;
 use Milpa\ToolRuntime\Gate\ToolCallRefused;
 use Milpa\ToolRuntime\Rendering\RendererRegistry;
 use Milpa\ToolRuntime\ToolResult;
@@ -946,7 +947,8 @@ class AgentOrchestrator
 
                     // 3. Execute Tool
                     try {
-                        $toolResult = $this->mcpClient->callTool($functionName, $functionArgs);
+                        $resultBudget = ResultBudget::json($this->toolResultBudget());
+                        $toolResult = $this->mcpClient->callToolWithBudget($functionName, $functionArgs, $resultBudget);
 
                         // Handle ToolResult objects
                         if ($toolResult instanceof ToolResult) {
@@ -970,7 +972,7 @@ class AgentOrchestrator
                             $this->log("Step $i: ✅ TOOL RESULT (ToolResult) '$functionName': " . substr($output, 0, 500));
                         } else {
                             // Legacy string/array handling
-                            $output = is_string($toolResult) ? $toolResult : json_encode($toolResult, JSON_UNESCAPED_UNICODE);
+                            $output = is_string($toolResult) ? $toolResult : $resultBudget->encode($toolResult);
                             $this->log("Step $i: ✅ TOOL RESULT '$functionName': " . substr($output, 0, 500));
 
                             // Legacy confirmation check
