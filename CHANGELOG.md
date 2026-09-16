@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.26.0](https://github.com/getmilpa/ai-gateway/compare/v0.25.0...v0.26.0) (2026-09-16)
+
+
+### Features
+
+* deliver the native result budget to tool producers ([f901982](https://github.com/getmilpa/ai-gateway/commit/f901982cf67a58b6d1ca4c289383baa5acb78ca5))
+* deliver the native result budget to tool producers ([e162cfa](https://github.com/getmilpa/ai-gateway/commit/e162cfaea89b58af277029cfa913ec2cbe973d84))
+
+
+### Bug Fixes
+
+* keep result truncation on the UTF-8 budget ruler ([c7e06e5](https://github.com/getmilpa/ai-gateway/commit/c7e06e534d5cf9f4be2da60cceb6e3dd83801e60))
+
 ## [0.25.0](https://github.com/getmilpa/ai-gateway/compare/v0.24.5...v0.25.0) (2026-09-14)
 
 
