@@ -346,3 +346,9 @@ issues via [SECURITY.md](SECURITY.md), and note that this project follows a
 ---
 
 Milpa is designed, built, and maintained by **[Rodrigo Vicente - TeamX Agency](https://teamx.agency/?utm_source=github&utm_medium=readme&utm_campaign=milpa&utm_content=ai-gateway)**.
+
+## Producer-aware tool result limits
+
+Each native tool invocation receives a `ResultBudget` through its `ToolContext`. The gateway derives the allowance from the declared context window using its existing rule (8000 characters for 32768 tokens; 6144 for 8192) and uses the same JSON encoder when delivering array results. A contextual handler can fit a complete result, including metadata, before returning it.
+
+This does not raise the existing ceiling or change scope checks, consent, progress recovery, or history projection. Legacy strings keep their existing direct rendering; `ToolResult` objects keep their renderer path. Producers that ignore the optional budget retain the existing truncation behavior. The constraint lasts for one synchronous governed call.
