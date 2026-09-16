@@ -347,6 +347,23 @@ issues via [SECURITY.md](SECURITY.md), and note that this project follows a
 
 Milpa is designed, built, and maintained by **[Rodrigo Vicente - TeamX Agency](https://teamx.agency/?utm_source=github&utm_medium=readme&utm_campaign=milpa&utm_content=ai-gateway)**.
 
+## Judging a final answer
+
+A host can pass `answerJudge: $judge` to `AgentOrchestrator`. Its `AnswerJudge::judge(string
+$candidate): AnswerVerdict` receives the raw final candidate and returns `accepted`, `rejected`,
+or `indeterminate`, bound to `hash('sha256', $candidate)`, with a reason and producer evidence.
+The host owns the criterion and evidence; the model cannot declare its own acceptance.
+
+An accepted answer returns the exact candidate and terminates as `final_answer`, including after
+a pending progress notice. Rejection terminates as `answer_rejected`; an unavailable judge or a
+verdict for another candidate terminates as `answer_indeterminate`. `RunTermination::toArray()`
+includes `answerVerdict` when present. The existing progress receipt remains unchanged: acceptance
+does not manufacture growth, verify recorded work, grant authority, or add retries. Recovery
+control markers, interruption, tool gates and the total budget retain their existing behavior.
+
+With no judge, both the answer presentation and termination shape remain unchanged. See
+Greenhouse decision 0418 and evidence 0736 for the finite diagnostic consumer and falsification bank.
+
 ## Producer-aware tool result limits
 
 Each native tool invocation receives a `ResultBudget` through its `ToolContext`. The gateway derives the allowance from the declared context window using its existing rule (8000 characters for 32768 tokens; 6144 for 8192) and uses the same JSON encoder when delivering array results. A contextual handler can fit a complete result, including metadata, before returning it.
