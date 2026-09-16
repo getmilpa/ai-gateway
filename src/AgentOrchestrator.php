@@ -164,10 +164,33 @@ class AgentOrchestrator
     /** Record the actual exit branch without changing the existing string result.
      * @param array<string, mixed>|null $receipt the progress producer's original receipt
      */
-    private function finish(RunEnd $reason, string $answer, ?array $receipt = null): string
+    private function finish(RunEnd $reason, string $answer, ?array $receipt = null, ?AnswerVerdict $answerVerdict = null): string
     {
-        $this->termination = new RunTermination($reason, $receipt);
+        $this->termination = new RunTermination($reason, $receipt, $answerVerdict);
         return $answer;
+    }
+
+    /** End one judged answer without retries, presentation prefixes or altered progress.
+     * @param array<string,mixed>|null $receipt the original pending progress receipt
+     */
+    private function judgeAnswer(string $candidate, ?array $receipt): string
+    {
+        $hash = hash('sha256', $candidate);
+        try {
+            $verdict = $this->answerJudge->judge($candidate);
+            if ($verdict->candidateSha256 !== $hash) {
+                throw new \UnexpectedValueException('The answer judge returned a verdict for another candidate.');
+            }
+        } catch (RunInterrupted $e) {
+            throw $e;
+        } catch (\Throwable) {
+            $verdict = new AnswerVerdict('indeterminate', $hash, 'judge_unavailable');
+        }
+        return match ($verdict->status) {
+            'accepted' => $this->finish(RunEnd::FinalAnswer, $candidate, $receipt, $verdict),
+            'rejected' => $this->finish(RunEnd::AnswerRejected, 'Answer delivery rejected.', $receipt, $verdict),
+            default => $this->finish(RunEnd::AnswerIndeterminate, 'Answer delivery could not be verified.', $receipt, $verdict),
+        };
     }
 
     /** Whether the toolbox serves tool schemas on demand (small-window models) instead of inlining all. */
@@ -201,7 +224,8 @@ class AgentOrchestrator
         ?PlanBoard $planBoard = null,
         bool $lazyTools = false,
         ?ProgressProbe $progressProbe = null,
-        int $contextTokens = 0
+        int $contextTokens = 0,
+        private readonly ?AnswerJudge $answerJudge = null,
     ) {
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
@@ -1051,6 +1075,15 @@ class AgentOrchestrator
                 $this->log("Step $i: Final response (no tool calls)");
 
                 $finalResponse = $response['content'] ?? '';
+
+                // A declared finite answer has its own judge. Recovery control markers retain
+                // their existing terminal meaning; a successful read is never fabricated growth.
+                $recoveryMarker = $noticeThisCall !== null && \is_string($finalResponse)
+                    && (str_starts_with(trim($finalResponse), self::HOUSE_DEBT_MARKER)
+                        || str_starts_with(trim($finalResponse), self::ABANDON_MARKER));
+                if ($this->answerJudge !== null && !$recoveryMarker) {
+                    return $this->judgeAnswer(\is_string($finalResponse) ? $finalResponse : '', $noticeThisCall['receipt'] ?? null);
+                }
 
                 // ── THE ENFORCEMENT OF THE FORCED CHOICE (greenhouse decisions/0185) ────────────
                 //

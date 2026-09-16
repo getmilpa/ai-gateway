@@ -15,15 +15,19 @@ namespace Milpa\AiGateway;
 final readonly class RunTermination
 {
     /** @param array<string, mixed>|null $receipt the original progress receipt, when stalled */
-    public function __construct(public RunEnd $reason, public ?array $receipt = null)
+    public function __construct(public RunEnd $reason, public ?array $receipt = null, public ?AnswerVerdict $answerVerdict = null)
     {
     }
 
     /** Export the reason and its optional producer receipt.
-     * @return array{reason: string, receipt: array<string, mixed>|null}
+     * @return array{reason: string, receipt: array<string, mixed>|null, answerVerdict?: array<string,mixed>}
      */
     public function toArray(): array
     {
-        return ['reason' => $this->reason->value, 'receipt' => $this->receipt];
+        $result = ['reason' => $this->reason->value, 'receipt' => $this->receipt];
+        if ($this->answerVerdict !== null) {
+            $result['answerVerdict'] = $this->answerVerdict->toArray();
+        }
+        return $result;
     }
 }

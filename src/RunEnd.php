@@ -15,6 +15,8 @@ namespace Milpa\AiGateway;
 enum RunEnd: string
 {
     case FinalAnswer = 'final_answer';
+    case AnswerRejected = 'answer_rejected';
+    case AnswerIndeterminate = 'answer_indeterminate';
     case ToolRefused = 'tool_refused';
     case ConfirmationRequired = 'confirmation_required';
     case Blocked = 'blocked';
