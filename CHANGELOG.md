@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/getmilpa/ai-gateway/compare/v0.26.0...v0.27.0) (2026-09-16)
+
+
+### Features
+
+* judge optional final answers independently of progress (greenhouse 0418/0736) ([b0247b3](https://github.com/getmilpa/ai-gateway/commit/b0247b3ccd1f7a45bc43efdf7f130b69004558c8))
+
 ## [0.26.0](https://github.com/getmilpa/ai-gateway/compare/v0.25.0...v0.26.0) (2026-09-16)
 
 
