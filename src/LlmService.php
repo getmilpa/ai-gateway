@@ -206,6 +206,23 @@ class LlmService implements LlmServiceInterface
     }
 
     /**
+     * Project native summaries to the exact tool array sent to the selected provider.
+     * Budgeting and transport share this projection: registry metadata such as outputSchema
+     * or version does not consume input, while provider wrappers and schema defaults do.
+     * This is a pure projection; it neither sends a request nor changes the summaries.
+     *
+     * @param list<array<string, mixed>> $tools Native registry summaries.
+     *
+     * @return list<array<string, mixed>> The provider's tool input.
+     */
+    public function toolsForRequest(array $tools): array
+    {
+        return $this->provider === 'anthropic' || str_contains($this->model, 'claude')
+            ? $this->formatToolsForAnthropic($tools)
+            : $this->formatToolsForOpenAi($tools);
+    }
+
+    /**
      * @param list<array<string, mixed>> $tools
      * @param list<array<string, mixed>> $messages
      *
@@ -224,7 +241,7 @@ class LlmService implements LlmServiceInterface
         }
 
         if (!empty($tools)) {
-            $payload['tools'] = $this->formatToolsForOpenAi($tools);
+            $payload['tools'] = $this->toolsForRequest($tools);
             $payload['tool_choice'] = 'auto';
         }
 
@@ -508,7 +525,7 @@ class LlmService implements LlmServiceInterface
         }
 
         if (!empty($tools)) {
-            $payload['tools'] = $this->formatToolsForAnthropic($tools);
+            $payload['tools'] = $this->toolsForRequest($tools);
         }
 
         try {

@@ -142,6 +142,9 @@ responsible for the confirm/cancel round trip on the next user turn.
 call, including existing recovery paths. Omitting it preserves the 4096-token default and the
 previous input projection. With a known context, explicit output must be smaller than the
 window; the input budget leaves room for it and refuses oversized protected input before egress.
+The tool share uses `LlmService::toolsForRequest()`, the same provider-specific projection as
+the transport: it counts wrappers and schema defaults, and excludes registry-only `outputSchema`
+and `version` metadata. Messages, reasoning, tool-call pairs and the output reserve are preserved.
 This uses the existing input estimator, not the provider's tokenizer. Unknown context still
 transmits the finite limit but cannot establish available capacity. Truncation remains terminal
 and never increases the budget or executes incomplete tools.
