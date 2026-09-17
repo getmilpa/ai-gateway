@@ -55,7 +55,7 @@ final class RunTerminationTest extends TestCase
         $tools = $this->createMock(GatedToolCalls::class);
         $tools->method('getToolSummaries')->willReturn([]);
         $llm = $this->createMock(LlmService::class);
-        $answers = [self::ANSWER,AgentOrchestrator::STEPS_EXHAUSTED,AgentOrchestrator::PROGRESS_STALLED,'HOUSE_DEBT: a quoted marker'];
+        $answers = [self::ANSWER,AgentOrchestrator::STEPS_EXHAUSTED,AgentOrchestrator::CONTEXT_BUDGET_EXHAUSTED,AgentOrchestrator::PROGRESS_STALLED,'HOUSE_DEBT: a quoted marker'];
         $llm->expects(self::exactly(count($answers)))->method('generateResponse')->willReturnCallback(
             static function () use (&$answers): array {
                 return ['role' => 'assistant','content' => array_shift($answers)];

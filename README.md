@@ -91,8 +91,8 @@ provider-specific format.
 
 ## Run termination
 
-`run(): string` keeps its existing response text and exceptions. After calling the base
-loop, read `$orchestrator->termination()` for the producer's `RunTermination` observation:
+`run(): string` returns an answer or a terminal status, and propagates failures. After calling
+the base loop, read `$orchestrator->termination()` for the producer's `RunTermination` observation:
 
 ```php
 use Milpa\AiGateway\RunEnd;
@@ -107,7 +107,7 @@ try {
 ```
 
 `reason` distinguishes `final_answer`, `tool_refused`, `confirmation_required`, `blocked`,
-`steps_exhausted`, `progress_stalled`, `house_debt`, `invalid_response`, `interrupted`,
+`steps_exhausted`, `context_budget_exhausted`, `progress_stalled`, `house_debt`, `invalid_response`, `interrupted`,
 `output_truncated`, and `failed`. For `progress_stalled`, `receipt` carries the probe's original
 receipt. `toArray()` exports both fields. A refusal and a final answer can have identical text;
 the cause comes from the executed branch, never from matching that text.
@@ -148,6 +148,16 @@ and `version` metadata. Messages, reasoning, tool-call pairs and the output rese
 This uses the existing input estimator, not the provider's tokenizer. Unknown context still
 transmits the finite limit but cannot establish available capacity. Truncation remains terminal
 and never increases the budget or executes incomplete tools.
+
+When an explicit context/output budget no longer fits after a completed step, the loop returns
+`CONTEXT_BUDGET_EXHAUSTED` with the typed `context_budget_exhausted` cause. Its receipt records
+`estimatedInputTokens`, `contextTokens`, `outputTokens`, `inputLimitTokens`, `completedSteps`,
+and any pending `progressReceipt` / `recovery`. No additional request is sent, no tool is repeated,
+and no answer judge runs. The caller may recompose its durable session and start a new leg within
+its own finite total budget; the gateway does not resume automatically or certify useful progress.
+An impossible initial projection still throws `LengthException` with `failed`; failures inside
+provider recovery preserve their existing behavior. Unknown context or an omitted output budget
+keep the previous behavior. A model quoting the sentinel is still an ordinary final answer.
 
 `generateResponse(maxTokens: 4096)` requires a positive output limit. It sends
 `max_completion_tokens` to OpenAI-compatible endpoints and `max_tokens` to Anthropic.
