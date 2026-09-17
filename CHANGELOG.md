@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.1](https://github.com/getmilpa/ai-gateway/compare/v0.29.0...v0.29.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* budget the tool schemas actually sent to the provider ([f5e5ed2](https://github.com/getmilpa/ai-gateway/commit/f5e5ed22d51bf1e5f4d102689ea543bb9623de3b))
+
 ## [0.29.0](https://github.com/getmilpa/ai-gateway/compare/v0.28.0...v0.29.0) (2026-09-17)
 
 
