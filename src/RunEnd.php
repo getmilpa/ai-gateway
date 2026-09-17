@@ -21,6 +21,7 @@ enum RunEnd: string
     case ConfirmationRequired = 'confirmation_required';
     case Blocked = 'blocked';
     case StepsExhausted = 'steps_exhausted';
+    case ContextBudgetExhausted = 'context_budget_exhausted';
     case ProgressStalled = 'progress_stalled';
     case HouseDebt = 'house_debt';
     case InvalidResponse = 'invalid_response';

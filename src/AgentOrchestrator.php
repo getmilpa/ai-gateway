@@ -38,6 +38,9 @@ class AgentOrchestrator
      */
     public const STEPS_EXHAUSTED = 'Error: Maximum agent steps reached.';
 
+    /** A completed step cannot fit another request; only the caller may start a new bounded leg. */
+    public const CONTEXT_BUDGET_EXHAUSTED = 'Error: Agent context budget exhausted.';
+
     /**
      * What a leg returns when the forced choice was not met or its measured recovery exhausted
      * without growth (greenhouse decisions/0185 and 0343). Preparation alone is not completion;
@@ -464,12 +467,32 @@ class AgentOrchestrator
      */
     private function generateResponse(string $prompt, array $tools, array $messages): array
     {
-        if ($this->outputTokens !== null && $this->contextTokens > 0
-            && $this->estimateProjectionTokens($messages) + $this->estimateToolsTokens($tools) > $this->contextTokens - $this->outputTokens) {
+        if ($this->exceededInputBudget($tools, $messages) !== null) {
             throw new \LengthException('The estimated input leaves no room for the declared output budget.');
         }
 
         return $this->llm->generateResponse($prompt, $tools, $messages, $this->outputTokens ?? 4096);
+    }
+
+    /** One ruler for refusal and the between-step pause; never a provider token count.
+     * @param list<array<string,mixed>> $tools    provider-facing tool summaries
+     * @param list<array<string,mixed>> $messages final projected messages
+     *
+     * @return array{estimatedInputTokens:int,contextTokens:int,outputTokens:int,inputLimitTokens:int}|null
+     */
+    private function exceededInputBudget(array $tools, array $messages): ?array
+    {
+        if ($this->outputTokens === null || $this->contextTokens <= 0) {
+            return null;
+        }
+        $estimate = $this->estimateProjectionTokens($messages) + $this->estimateToolsTokens($tools);
+        $limit = $this->contextTokens - $this->outputTokens;
+        return $estimate > $limit ? [
+            'estimatedInputTokens' => $estimate,
+            'contextTokens' => $this->contextTokens,
+            'outputTokens' => $this->outputTokens,
+            'inputLimitTokens' => $limit,
+        ] : null;
     }
 
     /**
@@ -899,6 +922,18 @@ class AgentOrchestrator
             // re-projects from it under a smaller budget.
             $sinAcotar = $paraElModelo;
             $paraElModelo = $this->boundProjection($paraElModelo, $tools, $i);
+
+            // Pause only at a completed-step boundary. An impossible initial request and failures
+            // inside provider recovery still fail; this branch neither retries nor repeats tools.
+            // The caller retains the total budget, durable session and pending progress recovery.
+            $contextReceipt = $i > 0 ? $this->exceededInputBudget($tools, $paraElModelo) : null;
+            if ($contextReceipt !== null) {
+                return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, $contextReceipt + [
+                    'completedSteps' => $i,
+                    'progressReceipt' => $noticeThisCall['receipt'] ?? null,
+                    'recovery' => $noticeThisCall['recovery'] ?? null,
+                ]);
+            }
 
             // 1. Ask LLM. The exceed-context 400 is the ONE 4xx with a governed response — and
             // only when a budget exists to shrink (run 12, Rod's ruling): the provider named the
