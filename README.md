@@ -221,6 +221,23 @@ was being counted as approval.
 
 ## Provider translation
 
+For an explicit finite JSON output shape, clone the client with a `StructuredOutput`:
+
+```php
+$structured = $llm->withStructuredOutput(new \Milpa\AiGateway\StructuredOutput(
+    'diagnosis',
+    ['required' => ['string'], 'configured' => ['string'], 'matches' => ['boolean']],
+));
+$reply = $structured->generateResponse($prompt, $tools, $messages);
+```
+
+This preserves the client transport, observers, tools and output limit; `$llm` stays unchanged.
+The clone sends `response_format` on buffered and streaming OpenAI-compatible calls. The provider
+must support it; Anthropic is refused before HTTP, and HTTP errors never trigger a plain-text
+fallback. The declaration admits at most 64 required scalar fields and no arbitrary schema,
+constants or expected values. Replies remain unmodified: the caller must judge their format and
+truth. Without the clone, requests retain their existing wire shape.
+
 `LlmService` speaks one shape to its callers — OpenAI's `messages` / `tool_calls` — and
 translates both directions for Anthropic:
 

@@ -92,6 +92,7 @@ class LlmService implements LlmServiceInterface
     private array $extraHeaders;
     private ?LoggerInterface $logger;
     private ?ChannelObserver $channelObserver;
+    private ?StructuredOutput $structuredOutput = null;
 
     /**
      * Fires ONCE PER REAL SSE CHUNK while the model is answering, so a live surface (the TUI
@@ -145,6 +146,20 @@ class LlmService implements LlmServiceInterface
         $psr17Factory = new HttpFactory();
         $this->requestFactory = $requestFactory ?? $psr17Factory;
         $this->streamFactory = $streamFactory ?? $psr17Factory;
+    }
+
+    /** Clone the client with an explicit format while retaining its transport and observers.
+     * The provider must support this wire option; an HTTP refusal is never retried as plain text.
+     * Responses remain unmodified and must still be judged by the caller.
+     */
+    public function withStructuredOutput(StructuredOutput $output): self
+    {
+        if ($this->provider !== 'openai' || str_contains($this->model, 'claude')) {
+            throw new \InvalidArgumentException('Structured output requires an OpenAI-compatible provider.');
+        }
+        $client = clone $this;
+        $client->structuredOutput = $output;
+        return $client;
     }
 
     private function log(string $message): void
@@ -203,6 +218,10 @@ class LlmService implements LlmServiceInterface
             'messages' => $messages,
             'max_completion_tokens' => $maxTokens,
         ];
+
+        if ($this->structuredOutput !== null) {
+            $payload['response_format'] = $this->structuredOutput->toArray();
+        }
 
         if (!empty($tools)) {
             $payload['tools'] = $this->formatToolsForOpenAi($tools);
