@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.30.0](https://github.com/getmilpa/ai-gateway/compare/v0.29.1...v0.30.0) (2026-09-17)
+
+
+### Features
+
+* expose context budget termination between completed steps ([ffe5330](https://github.com/getmilpa/ai-gateway/commit/ffe53306054892e3a5578eff0f4de2719c766c37))
+* integrate context budget termination ([#93](https://github.com/getmilpa/ai-gateway/issues/93)) ([1baa14f](https://github.com/getmilpa/ai-gateway/commit/1baa14fffe6ca9a911601e90d323bd6777275b00))
+
 ## [0.29.1](https://github.com/getmilpa/ai-gateway/compare/v0.29.0...v0.29.1) (2026-09-17)
 
 
