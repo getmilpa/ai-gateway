@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/getmilpa/ai-gateway/compare/v0.28.0...v0.29.0) (2026-09-17)
+
+
+### Features
+
+* carry an explicit output budget through the native agent loop ([e20b0c9](https://github.com/getmilpa/ai-gateway/commit/e20b0c9b2a82b89c7dca9621e4a2d7bf6787349f))
+
 ## [0.28.0](https://github.com/getmilpa/ai-gateway/compare/v0.27.0...v0.28.0) (2026-09-17)
 
 
