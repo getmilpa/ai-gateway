@@ -226,7 +226,11 @@ class AgentOrchestrator
         ?ProgressProbe $progressProbe = null,
         int $contextTokens = 0,
         private readonly ?AnswerJudge $answerJudge = null,
+        private readonly ?int $outputTokens = null,
     ) {
+        if ($outputTokens !== null && ($outputTokens < 1 || ($contextTokens > 0 && $outputTokens >= $contextTokens))) {
+            throw new \InvalidArgumentException('outputTokens must be positive and smaller than a known context window.');
+        }
         $this->llm = $llm;
         $this->mcpClient = $mcpClient;
         $this->maxSteps = $maxSteps;
@@ -439,11 +443,31 @@ class AgentOrchestrator
      */
     private function legBudget(): int
     {
-        if ($this->learnedLegBudgetTokens > 0) {
-            return $this->learnedLegBudgetTokens;
+        $budget = $this->learnedLegBudgetTokens > 0
+            ? $this->learnedLegBudgetTokens
+            : (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
+
+        return $this->outputTokens === null ? $budget : min($budget, $this->contextTokens - $this->outputTokens);
+    }
+
+    /**
+     * Carry one declared output limit through every loop call, including existing recovery paths.
+     * The input ruler is an estimate, not a provider token count. When it already cannot leave
+     * room for explicit output, refuse before egress; an unknown context makes no reserve claim.
+     *
+     * @param list<array<string, mixed>> $tools    Tool schemas sent with this call.
+     * @param list<array<string, mixed>> $messages The final projected input for this call.
+     *
+     * @return array<string, mixed> The gateway's decoded response.
+     */
+    private function generateResponse(string $prompt, array $tools, array $messages): array
+    {
+        if ($this->outputTokens !== null && $this->contextTokens > 0
+            && $this->estimateProjectionTokens($messages) + $this->estimateToolsTokens($tools) > $this->contextTokens - $this->outputTokens) {
+            throw new \LengthException('The estimated input leaves no room for the declared output budget.');
         }
 
-        return (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
+        return $this->llm->generateResponse($prompt, $tools, $messages, $this->outputTokens ?? 4096);
     }
 
     /**
@@ -565,7 +589,7 @@ class AgentOrchestrator
             $failedProjection = $this->boundProjection($unbounded, $tools, $step);
 
             try {
-                $response = $this->llm->generateResponse($prompt, $tools, $failedProjection);
+                $response = $this->generateResponse($prompt, $tools, $failedProjection);
                 // Noted ADDITIVELY on the healed message, like transport_retried — the record
                 // stays honest about what it took to land this answer.
                 $response['context_healed'] = true;
@@ -879,7 +903,7 @@ class AgentOrchestrator
             // overage, so the leg heals itself instead of dying. An unbudgeted caller, and every
             // other failure, keeps surfacing exactly as before.
             try {
-                $response = $this->llm->generateResponse($prompt, $tools, $paraElModelo);
+                $response = $this->generateResponse($prompt, $tools, $paraElModelo);
             } catch (ContextExceededException $overflow) {
                 if ($this->contextTokens <= 0) {
                     // Healing without a budget to shrink would be guesswork — today's verbatim
@@ -1152,7 +1176,7 @@ class AgentOrchestrator
                     $paraElReintento[] = ['role' => 'system', 'content' => self::DEGENERATE_ANSWER_NUDGE];
 
                     try {
-                        $retry = $this->llm->generateResponse($prompt, $tools, $paraElReintento);
+                        $retry = $this->generateResponse($prompt, $tools, $paraElReintento);
                     } catch (OutputTruncatedException $e) {
                         // A known incomplete retry cannot turn into a natural final answer.
                         throw $e;
