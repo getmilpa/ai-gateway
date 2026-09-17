@@ -95,6 +95,6 @@ final class StructuredOutputTest extends TestCase
         $http = $this->createMock(ClientInterface::class);
         $http->expects(self::once())->method('sendRequest')->willReturn(new Response(400, [], 'unsupported response format'));
         $this->expectException(\RuntimeException::class);
-        (new LlmService('fixture','fixture',httpClient:$http))->withStructuredOutput($output)->generateResponse('Diagnose');
+        (new LlmService('fixture', 'fixture', httpClient:$http))->withStructuredOutput($output)->generateResponse('Diagnose');
     }
 }
