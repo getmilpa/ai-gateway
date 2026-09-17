@@ -138,6 +138,14 @@ If a tool result requires confirmation or is blocked by policy, the loop stops i
 returns that outcome instead of continuing — the caller (a chat handler, a CLI, a bot) is
 responsible for the confirm/cancel round trip on the next user turn.
 
+`AgentOrchestrator(..., outputTokens: 8192)` declares one positive output limit for every loop
+call, including existing recovery paths. Omitting it preserves the 4096-token default and the
+previous input projection. With a known context, explicit output must be smaller than the
+window; the input budget leaves room for it and refuses oversized protected input before egress.
+This uses the existing input estimator, not the provider's tokenizer. Unknown context still
+transmits the finite limit but cannot establish available capacity. Truncation remains terminal
+and never increases the budget or executes incomplete tools.
+
 `generateResponse(maxTokens: 4096)` requires a positive output limit. It sends
 `max_completion_tokens` to OpenAI-compatible endpoints and `max_tokens` to Anthropic.
 Oversized structured tool exceptions use a bounded `milpa.tool-failure-window/v1` projection.
