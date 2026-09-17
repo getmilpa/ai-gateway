@@ -337,7 +337,10 @@ final class ContextSelfHealingTest extends TestCase
      */
     public function testAHugeToolsArrayTightensTheMessageShareOfTheBudget(): void
     {
-        $llm = $this->createMock(LlmService::class);
+        $llm = $this->getMockBuilder(LlmService::class)
+            ->setConstructorArgs(['', 'fixture', 'openai'])
+            ->onlyMethods(['generateResponse'])
+            ->getMock();
         $mcp = $this->createMock(McpClientService::class);
 
         // One tool whose schema alone is ~20k chars (~5k tokens): the provider contract rides

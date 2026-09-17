@@ -418,7 +418,9 @@ class AgentOrchestrator
     /**
      * Estimate the token cost of the tools array that rides the SAME request as the messages —
      * serialized chars over {@see ESTIMATED_CHARS_PER_TOKEN}, the ruler the projection estimate
-     * uses. The measured killer of run 12: 62 schemas (~10k+ tokens) rode outside the count, so
+     * uses. Count the provider projection, including its wrappers and defaults, rather than
+     * native outputSchema/version metadata that never travels (greenhouse evidence/0759).
+     * The measured killer of run 12: 62 schemas (~10k+ tokens) rode outside the count, so
      * the «bounded» request exceeded the window anyway. Schemas are the provider contract and
      * are never elided; counting them just makes the budget honest — with fat schemas the
      * message share tightens accordingly.
@@ -431,7 +433,7 @@ class AgentOrchestrator
             return 0;
         }
 
-        $encoded = json_encode($tools, JSON_UNESCAPED_UNICODE);
+        $encoded = json_encode($this->llm->toolsForRequest($tools), JSON_UNESCAPED_UNICODE);
 
         return intdiv(mb_strlen($encoded === false ? '' : $encoded), self::ESTIMATED_CHARS_PER_TOKEN);
     }

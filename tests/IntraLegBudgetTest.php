@@ -60,7 +60,10 @@ class IntraLegBudgetTest extends TestCase
      */
     private function runClimbingLeg(int $contextTokens, int $fatSteps, ?bool $useNamedZero = null): array
     {
-        $llm = $this->createMock(LlmService::class);
+        $llm = $this->getMockBuilder(LlmService::class)
+            ->setConstructorArgs(['', 'fixture', 'openai'])
+            ->onlyMethods(['generateResponse'])
+            ->getMock();
         $mcp = $this->createMock(McpClientService::class);
 
         $mcp->method('getToolSummaries')->willReturn([
@@ -184,7 +187,10 @@ class IntraLegBudgetTest extends TestCase
      */
     private function runClimbingLegLegacyShape(int $fatSteps): array
     {
-        $llm = $this->createMock(LlmService::class);
+        $llm = $this->getMockBuilder(LlmService::class)
+            ->setConstructorArgs(['', 'fixture', 'openai'])
+            ->onlyMethods(['generateResponse'])
+            ->getMock();
         $mcp = $this->createMock(McpClientService::class);
 
         $mcp->method('getToolSummaries')->willReturn([
@@ -262,7 +268,10 @@ class IntraLegBudgetTest extends TestCase
      */
     public function testTheProtectedSetSurvivesABudgetThatElidesEverythingElse(): void
     {
-        $llm = $this->createMock(LlmService::class);
+        $llm = $this->getMockBuilder(LlmService::class)
+            ->setConstructorArgs(['', 'fixture', 'openai'])
+            ->onlyMethods(['generateResponse'])
+            ->getMock();
         $mcp = $this->createMock(McpClientService::class);
 
         $mcp->method('getToolSummaries')->willReturn([
@@ -354,7 +363,10 @@ class IntraLegBudgetTest extends TestCase
      */
     public function testElisionNeverAccumulatesIntoHistory(): void
     {
-        $llm = $this->createMock(LlmService::class);
+        $llm = $this->getMockBuilder(LlmService::class)
+            ->setConstructorArgs(['', 'fixture', 'openai'])
+            ->onlyMethods(['generateResponse'])
+            ->getMock();
         $mcp = $this->createMock(McpClientService::class);
 
         $mcp->method('getToolSummaries')->willReturn([
