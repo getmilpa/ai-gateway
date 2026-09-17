@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/getmilpa/ai-gateway/compare/v0.27.0...v0.28.0) (2026-09-17)
+
+
+### Features
+
+* request finite structured output through an explicit client clone (greenhouse 0421) ([b628f7e](https://github.com/getmilpa/ai-gateway/commit/b628f7ea9ef3fb682ebd2b4c483bcd2cc56eb665))
+
 ## [0.27.0](https://github.com/getmilpa/ai-gateway/compare/v0.26.0...v0.27.0) (2026-09-16)
 
 
