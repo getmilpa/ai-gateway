@@ -293,7 +293,7 @@ class LlmService implements LlmServiceInterface
                 }
 
                 return $streamMessage;
-            } catch (OutputTruncatedException $e) {
+            } catch (OutputTruncatedException|InputBudgetException $e) {
                 throw $e;
             } catch (TransportRetryExhaustedException $e) {
                 // Already carries the provider prefix AND the attempt count; wrapping it again
