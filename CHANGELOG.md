@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/getmilpa/ai-gateway/compare/v0.30.0...v0.31.0) (2026-09-20)
+
+
+### Features
+
+* preserve counted input budget refusals ([#95](https://github.com/getmilpa/ai-gateway/issues/95)) ([4dc23a1](https://github.com/getmilpa/ai-gateway/commit/4dc23a1e9c3b638cb5c3bc373534eb097b235c8d))
+
 ## [0.30.0](https://github.com/getmilpa/ai-gateway/compare/v0.29.1...v0.30.0) (2026-09-17)
 
 
