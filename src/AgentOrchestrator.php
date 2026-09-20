@@ -783,7 +783,7 @@ class AgentOrchestrator
                 $error instanceof RunInterrupted => RunEnd::Interrupted,
                 $error instanceof OutputTruncatedException => RunEnd::OutputTruncated,
                 default => RunEnd::Failed,
-            });
+            }, $error instanceof InputBudgetException ? $error->receipt() : null);
             throw $error;
         }
     }
@@ -940,14 +940,27 @@ class AgentOrchestrator
             // overage, so the leg heals itself instead of dying. An unbudgeted caller, and every
             // other failure, keeps surfacing exactly as before.
             try {
-                $response = $this->generateResponse($prompt, $tools, $paraElModelo);
-            } catch (ContextExceededException $overflow) {
-                if ($this->contextTokens <= 0) {
-                    // Healing without a budget to shrink would be guesswork — today's verbatim
-                    // error stands for unbudgeted callers.
-                    throw $overflow;
+                try {
+                    $response = $this->generateResponse($prompt, $tools, $paraElModelo);
+                } catch (ContextExceededException $overflow) {
+                    if ($this->contextTokens <= 0) {
+                        // Healing without a budget would be guesswork; preserve the provider error.
+                        throw $overflow;
+                    }
+                    [$response, $paraElModelo] = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
                 }
-                [$response, $paraElModelo] = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
+            } catch (InputBudgetExceededException $budget) {
+                // Only a completed-step boundary with matching declared limits permits a pause.
+                // Initial, unknown-context and mismatched-adapter failures remain explicit errors.
+                if ($i === 0 || $budget->contextTokens !== $this->contextTokens || $budget->outputTokens !== ($this->outputTokens ?? 4096)) {
+                    throw $budget;
+                }
+
+                return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, $budget->receipt() + [
+                    'completedSteps' => $i,
+                    'progressReceipt' => $noticeThisCall['receipt'] ?? null,
+                    'recovery' => $noticeThisCall['recovery'] ?? null,
+                ]);
             }
             $this->log("Step $i: LLM response - role=" . ($response['role'] ?? 'unknown') .
                 ", has_content=" . (!empty($response['content']) ? 'yes' : 'no') .
@@ -1214,8 +1227,8 @@ class AgentOrchestrator
 
                     try {
                         $retry = $this->generateResponse($prompt, $tools, $paraElReintento);
-                    } catch (OutputTruncatedException $e) {
-                        // A known incomplete retry cannot turn into a natural final answer.
+                    } catch (OutputTruncatedException|InputBudgetException $e) {
+                        // An incomplete or locally refused retry cannot become a natural final answer.
                         throw $e;
                     } catch (\Throwable $e) {
                         // The guard must never make things worse: a retry that dies leaves the

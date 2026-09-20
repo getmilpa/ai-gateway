@@ -159,6 +159,27 @@ An impossible initial projection still throws `LengthException` with `failed`; f
 provider recovery preserve their existing behavior. Unknown context or an omitted output budget
 keep the previous behavior. A model quoting the sentinel is still an ordinary final answer.
 
+An optional guard in a caller-supplied HTTP client can count the **effective request**, after
+its transport transformations and before generation. The adapter owns the tokenizer, template,
+provider identity and binding of the count to the exact body it would dispatch. If the count
+exceeds `contextTokens - outputTokens`, it throws
+`InputBudgetExceededException(inputTokens, contextTokens, outputTokens, requestSha256)`.
+If counting fails or cannot be bound to that body, it throws
+`InputBudgetUnavailableException(requestSha256, previous: $error)` before dispatch.
+This is an opt-in adapter contract; the gateway does not install a tokenizer, change defaults,
+or treat an estimate as a count. A hash names a body; the adapter must actually verify it.
+
+Both causes survive buffered/streamed OpenAI-compatible calls and Anthropic calls without a
+transport retry. A counted overflow at a completed-step boundary returns
+`context_budget_exhausted` only when the adapter's context/output limits match the loop's.
+Its receipt uses `source: counted_request`, `inputTokens` and `requestSha256` alongside the
+limits, completed steps and pending recovery. It never labels the count `estimatedInputTokens`.
+Initial refusals, unknown/mismatched limits and unavailable counts throw with `failed` and the
+guard's receipt. Refusal during a degenerate-answer retry also throws: the original near-empty
+answer cannot hide it. A genuine provider HTTP400 retains its existing healing path, but a
+local guard refusal within that path does not trigger another generation retry.
+Clients without such a guard retain the existing estimate, wire and behavior.
+
 `generateResponse(maxTokens: 4096)` requires a positive output limit. It sends
 `max_completion_tokens` to OpenAI-compatible endpoints and `max_tokens` to Anthropic.
 Oversized structured tool exceptions use a bounded `milpa.tool-failure-window/v1` projection.
