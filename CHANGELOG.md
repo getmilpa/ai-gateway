@@ -5,6 +5,8 @@
 
 ### Features
 
+The optional `AgentOrchestrator::setSystemPromptProjection()` callback receives the original system string and the exact outgoing tool offer after lazy filtering. It projects only the request copy before context budgeting, preserving conversation history. Passing `null` retains the existing behavior.
+
 * project request instructions from the current tool offer (Greenhouse 0867) ([834aabd](https://github.com/getmilpa/ai-gateway/commit/834aabde23116a160987a506333033dc2f6f56cd))
 
 ## [0.32.0](https://github.com/getmilpa/ai-gateway/compare/v0.31.0...v0.32.0) (2026-09-21)
