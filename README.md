@@ -134,6 +134,14 @@ completion evidence and authorization remain the host's responsibility.
    configured, JSON otherwise — is fed back into the message history as a `tool` message, and
    the loop repeats.
 
+`setSystemPromptProjection(callable $projection)` optionally derives the first system message
+from the original system string and this request's exact tool summaries. The callback receives
+`(string $system, array $tools): string` after lazy filtering and before context budgeting. It
+changes only the outgoing copy: history, tool execution, the plan and progress notices retain
+their existing paths. Withdrawal and restoration use a fresh projection of the same base;
+no extra catalogue read or message accumulation occurs. Exceptions stop the run before the
+model request. `setSystemPromptProjection(null)` restores the unchanged default path.
+
 If a tool result requires confirmation or is blocked by policy, the loop stops immediately and
 returns that outcome instead of continuing — the caller (a chat handler, a CLI, a bot) is
 responsible for the confirm/cancel round trip on the next user turn.

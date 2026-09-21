@@ -156,6 +156,22 @@ class AgentOrchestrator
     private ?ToolContext $toolContext;
     private ?ToolResult $lastToolResult = null;
 
+    /** @var (\Closure(string, list<array<string, mixed>>): string)|null */
+    private ?\Closure $systemPromptProjection = null;
+
+    /**
+     * Project this request's system instructions from the exact outgoing tool offer.
+     * The base prompt and conversation stay unchanged; null preserves the legacy path.
+     * Projection failures surface before contacting the model (greenhouse0867).
+     *
+     * @param (callable(string, list<array<string, mixed>>): string)|null $projection
+     */
+    public function setSystemPromptProjection(?callable $projection): self
+    {
+        $this->systemPromptProjection = $projection === null ? null : \Closure::fromCallable($projection);
+        return $this;
+    }
+
     private ?RunTermination $termination = null;
 
     /** The latest base-loop exit; null before a run or while that run is in progress. */
@@ -892,6 +908,9 @@ class AgentOrchestrator
             //
             // Q-P20-B mide si esto sostiene la continuidad. Mientras no cierre, el default es `null`.
             $paraElModelo = $messages;
+            if ($this->systemPromptProjection !== null) {
+                $paraElModelo[0]['content'] = ($this->systemPromptProjection)($systemPrompt, $tools);
+            }
             $plan = $this->planBoard?->current();
             if ($plan !== null && trim($plan) !== '') {
                 $paraElModelo[] = ['role' => 'system', 'content' => $plan];
