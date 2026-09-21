@@ -428,3 +428,13 @@ Greenhouse decision 0418 and evidence 0736 for the finite diagnostic consumer an
 Each native tool invocation receives a `ResultBudget` through its `ToolContext`. The gateway derives the allowance from the declared context window using its existing rule (8000 characters for 32768 tokens; 6144 for 8192) and uses the same JSON encoder when delivering array results. A contextual handler can fit a complete result, including metadata, before returning it.
 
 This does not raise the existing ceiling or change scope checks, consent, progress recovery, or history projection. Legacy strings keep their existing direct rendering; `ToolResult` objects keep their renderer path. Producers that ignore the optional budget retain the existing truncation behavior. The constraint lasts for one synchronous governed call.
+
+### Explicit MiniMax-M3 thinking
+
+`$llm->withMiniMaxThinking('disabled')` returns a clone that sends
+`thinking: {"type": "disabled"}` on the OpenAI-compatible MiniMax-M3 API.
+`adaptive` is also supported; omission leaves provider defaults unchanged. Other
+models, providers and modes are rejected before transport. This changes generation,
+not the placement of reasoning text (`reasoning_split`), and does not change token
+limits, messages, tool permissions or response parsing. Channel observers receive
+the actual option. See Greenhouse evidence 0831.
