@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/getmilpa/ai-gateway/compare/v0.31.0...v0.32.0) (2026-09-21)
+
+
+### Features
+
+* support explicit MiniMax-M3 thinking profiles ([a6fdfa4](https://github.com/getmilpa/ai-gateway/commit/a6fdfa4c21e2b609724adc9b1ac5b483a1c66500))
+
 ## [0.31.0](https://github.com/getmilpa/ai-gateway/compare/v0.30.0...v0.31.0) (2026-09-20)
 
 
