@@ -93,6 +93,7 @@ class LlmService implements LlmServiceInterface
     private ?LoggerInterface $logger;
     private ?ChannelObserver $channelObserver;
     private ?StructuredOutput $structuredOutput = null;
+    private ?string $miniMaxThinking = null;
 
     /**
      * Fires ONCE PER REAL SSE CHUNK while the model is answering, so a live surface (the TUI
@@ -159,6 +160,23 @@ class LlmService implements LlmServiceInterface
         }
         $client = clone $this;
         $client->structuredOutput = $output;
+        return $client;
+    }
+
+    /**
+     * Explicit MiniMax-M3 thinking mode; omission preserves the provider's default.
+     *
+     * This controls generation, not reasoning output formatting. Unsupported models/providers
+     * fail before transport rather than silently applying a different model's option.
+     */
+    public function withMiniMaxThinking(string $mode): self
+    {
+        if ($this->provider !== 'openai' || $this->model !== 'MiniMax-M3'
+            || !in_array($mode, ['disabled', 'adaptive'], true)) {
+            throw new \InvalidArgumentException('MiniMax thinking requires MiniMax-M3 on the OpenAI-compatible API and disabled or adaptive mode.');
+        }
+        $client = clone $this;
+        $client->miniMaxThinking = $mode;
         return $client;
     }
 
@@ -235,6 +253,10 @@ class LlmService implements LlmServiceInterface
             'messages' => $messages,
             'max_completion_tokens' => $maxTokens,
         ];
+
+        if ($this->miniMaxThinking !== null) {
+            $payload['thinking'] = ['type' => $this->miniMaxThinking];
+        }
 
         if ($this->structuredOutput !== null) {
             $payload['response_format'] = $this->structuredOutput->toArray();
