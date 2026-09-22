@@ -87,6 +87,7 @@ class LlmService implements LlmServiceInterface
     private string $model;
     private string $provider;
     private ?string $baseUrl;
+    private bool $ollamaCloud;
 
     /** @var array<string,string> */
     private array $extraHeaders;
@@ -135,7 +136,9 @@ class LlmService implements LlmServiceInterface
         $this->apiKey = $apiKey;
         $this->model = $model;
         $this->provider = strtolower($provider);
-        $this->baseUrl = $baseUrl === null ? null : rtrim($baseUrl, '/');
+        $root = $baseUrl === null ? null : rtrim($baseUrl, '/');
+        $this->ollamaCloud = in_array(strtolower($root ?? ''), ['https://ollama.com', 'https://ollama.com/v1'], true);
+        $this->baseUrl = $this->ollamaCloud ? 'https://ollama.com' : $root;
         $this->extraHeaders = $extraHeaders;
         $this->logger = $logger;
         $this->channelObserver = $channelObserver;
@@ -171,7 +174,7 @@ class LlmService implements LlmServiceInterface
      */
     public function withMiniMaxThinking(string $mode): self
     {
-        if ($this->provider !== 'openai' || $this->model !== 'MiniMax-M3'
+        if ($this->provider !== 'openai' || $this->ollamaCloud || $this->model !== 'MiniMax-M3'
             || !in_array($mode, ['disabled', 'adaptive'], true)) {
             throw new \InvalidArgumentException('MiniMax thinking requires MiniMax-M3 on the OpenAI-compatible API and disabled or adaptive mode.');
         }
@@ -248,10 +251,19 @@ class LlmService implements LlmServiceInterface
      */
     private function callOpenAi(array $tools, array $messages, int $maxTokens): array
     {
+        // Ollama Cloud exposes the OpenAI chat shape with a smaller request vocabulary. Keep
+        // the provider-specific projection at the transport seam so the orchestrator's native
+        // conversation and tool catalogue remain unchanged (greenhouse 0952/0953).
+        $wireMessages = $this->ollamaCloud
+            ? array_map(static fn (array $message): array => array_intersect_key(
+                $message,
+                array_flip(['role', 'content', 'tool_calls', 'tool_call_id'])
+            ), $messages)
+            : $messages;
         $payload = [
             'model' => $this->model,
-            'messages' => $messages,
-            'max_completion_tokens' => $maxTokens,
+            'messages' => $wireMessages,
+            $this->ollamaCloud ? 'max_tokens' : 'max_completion_tokens' => $maxTokens,
         ];
 
         if ($this->miniMaxThinking !== null) {
@@ -264,7 +276,9 @@ class LlmService implements LlmServiceInterface
 
         if (!empty($tools)) {
             $payload['tools'] = $this->toolsForRequest($tools);
-            $payload['tool_choice'] = 'auto';
+            if (!$this->ollamaCloud) {
+                $payload['tool_choice'] = 'auto';
+            }
         }
 
         // STREAMING SÓLO CUANDO ALGUIEN MIRA. Con un `onStreamChunk` la respuesta llega por SSE y
