@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/getmilpa/ai-gateway/compare/v0.35.0...v0.36.0) (2026-09-22)
+
+
+### Features
+
+* support maximum Ollama reasoning effort ([1a6bb3e](https://github.com/getmilpa/ai-gateway/commit/1a6bb3efb110594bdfea2bec7d10745c6d2848f8))
+
 ## [0.35.0](https://github.com/getmilpa/ai-gateway/compare/v0.34.0...v0.35.0) (2026-09-22)
 
 
