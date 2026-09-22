@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.35.0](https://github.com/getmilpa/ai-gateway/compare/v0.34.0...v0.35.0) (2026-09-22)
+
+
+### Features
+
+* tune Ollama Cloud reasoning effort ([9b2d16b](https://github.com/getmilpa/ai-gateway/commit/9b2d16be8c515e1526f242d376a17acfda666230))
+* tune Ollama Cloud reasoning effort ([9c59ef0](https://github.com/getmilpa/ai-gateway/commit/9c59ef0d3a650ef862f5180f9dd277aa1f6c1847))
+
 ## [0.34.0](https://github.com/getmilpa/ai-gateway/compare/v0.33.1...v0.34.0) (2026-09-22)
 
 
