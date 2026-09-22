@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.0](https://github.com/getmilpa/ai-gateway/compare/v0.33.1...v0.34.0) (2026-09-22)
+
+
+### Features
+
+* document Ollama Cloud transport profile ([04de02c](https://github.com/getmilpa/ai-gateway/commit/04de02c6403109cdbc68c8af6e9b2f39060cc500))
+* document Ollama Cloud transport profile ([7551c79](https://github.com/getmilpa/ai-gateway/commit/7551c79996b46d2e0ac4fa3a95636d65ce8d85e0))
+
 ## [0.33.1](https://github.com/getmilpa/ai-gateway/compare/v0.33.0...v0.33.1) (2026-09-22)
 
 
