@@ -89,6 +89,22 @@ translates the tool list, the message history, and the tool-call response to and
 Anthropic's shape internally, so `AgentOrchestrator` and `McpClientService` never see a
 provider-specific format.
 
+Ollama Cloud uses its OpenAI-compatible endpoint through the same `openai` provider:
+
+```php
+$llm = new LlmService(
+    apiKey: getenv('OLLAMA_API_KEY'),
+    model: 'glm-5.3-flash',
+    provider: 'openai',
+    baseUrl: 'https://ollama.com/v1',
+);
+```
+
+For this exact host, the gateway sends `max_tokens`, omits unsupported `tool_choice`, keeps
+only standard OpenAI message fields, and preserves Bearer authentication and native tool-call
+responses. Both `https://ollama.com` and `https://ollama.com/v1` select this profile. Explicit
+MiniMax thinking is rejected before transport because that request extension is provider-specific.
+
 ## Run termination
 
 `run(): string` returns an answer or a terminal status, and propagates failures. After calling
