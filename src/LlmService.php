@@ -193,8 +193,8 @@ class LlmService implements LlmServiceInterface
     public function withOllamaReasoningEffort(string $effort): self
     {
         if ($this->provider !== 'openai' || !$this->ollamaCloud
-            || !in_array($effort, ['low', 'medium', 'high'], true)) {
-            throw new \InvalidArgumentException('Ollama reasoning effort requires Ollama Cloud and low, medium or high.');
+            || !in_array($effort, ['low', 'medium', 'high', 'max'], true)) {
+            throw new \InvalidArgumentException('Ollama reasoning effort requires Ollama Cloud and low, medium, high or max.');
         }
         $client = clone $this;
         $client->ollamaReasoningEffort = $effort;
