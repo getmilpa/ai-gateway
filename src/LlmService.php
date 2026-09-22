@@ -95,6 +95,7 @@ class LlmService implements LlmServiceInterface
     private ?ChannelObserver $channelObserver;
     private ?StructuredOutput $structuredOutput = null;
     private ?string $miniMaxThinking = null;
+    private ?string $ollamaReasoningEffort = null;
 
     /**
      * Fires ONCE PER REAL SSE CHUNK while the model is answering, so a live surface (the TUI
@@ -183,6 +184,23 @@ class LlmService implements LlmServiceInterface
         return $client;
     }
 
+    /**
+     * Explicit reasoning effort for Ollama Cloud's OpenAI-compatible endpoint.
+     *
+     * Omission preserves the model's default. Keeping this profile host-specific prevents an
+     * OpenAI-shaped local endpoint from receiving an option it never advertised.
+     */
+    public function withOllamaReasoningEffort(string $effort): self
+    {
+        if ($this->provider !== 'openai' || !$this->ollamaCloud
+            || !in_array($effort, ['low', 'medium', 'high'], true)) {
+            throw new \InvalidArgumentException('Ollama reasoning effort requires Ollama Cloud and low, medium or high.');
+        }
+        $client = clone $this;
+        $client->ollamaReasoningEffort = $effort;
+        return $client;
+    }
+
     private function log(string $message): void
     {
         $this->logger?->debug("[LlmService] " . $message);
@@ -268,6 +286,10 @@ class LlmService implements LlmServiceInterface
 
         if ($this->miniMaxThinking !== null) {
             $payload['thinking'] = ['type' => $this->miniMaxThinking];
+        }
+
+        if ($this->ollamaReasoningEffort !== null) {
+            $payload['reasoning_effort'] = $this->ollamaReasoningEffort;
         }
 
         if ($this->structuredOutput !== null) {
