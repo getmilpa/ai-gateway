@@ -104,6 +104,8 @@ For this exact host, the gateway sends `max_tokens`, omits unsupported `tool_cho
 only standard OpenAI message fields, and preserves Bearer authentication and native tool-call
 responses. Both `https://ollama.com` and `https://ollama.com/v1` select this profile. Explicit
 MiniMax thinking is rejected before transport because that request extension is provider-specific.
+Use `$llm->withOllamaReasoningEffort('low')` (or `medium` / `high`) to send the documented
+`reasoning_effort` option; omission preserves the model's default.
 
 ## Run termination
 

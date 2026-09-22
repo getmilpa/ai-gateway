@@ -64,4 +64,45 @@ final class OllamaCloudTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $service->withMiniMaxThinking('adaptive');
     }
+
+    public function testExplicitReasoningEffortIsSentOnlyToOllamaCloud(): void
+    {
+        $request = null;
+        $http = $this->createMock(ClientInterface::class);
+        $http->expects(self::once())->method('sendRequest')->willReturnCallback(
+            static function (RequestInterface $sent) use (&$request): Response {
+                $request = $sent;
+                return new Response(200, [], (string) json_encode(['choices' => [[
+                    'finish_reason' => 'stop',
+                    'message' => ['role' => 'assistant', 'content' => 'Complete.'],
+                ]]]));
+            }
+        );
+        $service = new LlmService(
+            'test-key',
+            'glm-5.3-flash',
+            'openai',
+            httpClient: $http,
+            baseUrl: 'https://ollama.com/v1'
+        );
+
+        $service->withOllamaReasoningEffort('low')->generateResponse('Build it.', maxTokens: 16384);
+
+        self::assertInstanceOf(RequestInterface::class, $request);
+        $wire = json_decode((string) $request->getBody(), true);
+        self::assertSame('low', $wire['reasoning_effort']);
+        self::assertSame(16384, $wire['max_tokens']);
+
+        foreach (['', 'none', 'disabled', 'max'] as $effort) {
+            try {
+                $service->withOllamaReasoningEffort($effort);
+                self::fail('Invalid reasoning effort accepted.');
+            } catch (\InvalidArgumentException $error) {
+                self::assertStringContainsString('Ollama reasoning effort', $error->getMessage());
+            }
+        }
+        $this->expectException(\InvalidArgumentException::class);
+        (new LlmService('test-key', 'glm-5.3-flash', 'openai'))
+            ->withOllamaReasoningEffort('low');
+    }
 }
