@@ -732,6 +732,36 @@ class AgentOrchestratorTest extends TestCase
         $this->assertStringContainsString('necesita permiso', $respuesta, 'el motivo llega a quien preguntó');
     }
 
+    /** A registered function omitted from the actual step cannot reach the registry. */
+    public function testUnofferedModelFunctionReturnsCorrectiveResultWithoutExecution(): void
+    {
+        $this->mcpClient->method('getToolSummaries')->willReturn([
+            ['name' => 'sandbox_promote', 'description' => 'Apply a trial', 'inputSchema' => []],
+        ]);
+        $this->mcpClient->expects(self::never())->method('callTool');
+        $responses = 0;
+        $this->llmService->expects(self::exactly(2))->method('generateResponse')
+            ->willReturnCallback(function (string $prompt, array $tools, array $messages) use (&$responses): array {
+                self::assertSame(['sandbox_promote'], array_column($tools, 'name'));
+                if ($responses++ === 0) {
+                    return ['role' => 'assistant', 'content' => '', 'tool_calls' => [[
+                        'id' => 'offered-0947',
+                        'function' => ['name' => 'implement', 'arguments' => '{"mode":"finish"}'],
+                    ]]];
+                }
+
+                $last = end($messages);
+                self::assertSame('tool', $last['role']);
+                self::assertSame('offered-0947', $last['tool_call_id']);
+                self::assertStringContainsString("Tool 'implement' was not offered in this step", $last['content']);
+                self::assertStringContainsString('sandbox_promote', $last['content']);
+
+                return ['role' => 'assistant', 'content' => 'I need the offered tool.'];
+            });
+
+        self::assertStringContainsString('I need the offered tool.', $this->orchestrator->run('Apply the trial.'));
+    }
+
     /**
      * Un fallo NORMAL de herramienta sí vuelve al modelo, y el bucle sigue.
      *

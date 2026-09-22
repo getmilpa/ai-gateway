@@ -30,7 +30,7 @@ final class ContextBudgetTerminationTest extends TestCase
             new Response(200, [], json_encode(['choices' => [['finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => 'A fresh invocation can answer.']]]])),
         );
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
         $tools->expects(self::once())->method('callTool')->with('write', ['value' => 1])->willReturn('Recorded effect');
         $loop = new AgentOrchestrator(new LlmService('', 'fixture', 'openai', httpClient:$http), $tools, contextTokens:8192, outputTokens:4096);
         self::assertSame(AgentOrchestrator::CONTEXT_BUDGET_EXHAUSTED, $loop->run('Build.'));
@@ -67,7 +67,7 @@ final class ContextBudgetTerminationTest extends TestCase
         $http = $this->createMock(ClientInterface::class);
         $http->expects(self::once())->method('sendRequest')->willReturn($this->firstResponse());
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
         $tools->expects(self::once())->method('callTool')->willReturn('Recorded');
         $progress = ['window' => 4, 'reason' => 'no growth'];
         $probe = $this->createMock(ProgressProbe::class);
@@ -84,7 +84,7 @@ final class ContextBudgetTerminationTest extends TestCase
         $http = $this->createMock(ClientInterface::class);
         $http->expects(self::once())->method('sendRequest')->willReturn($this->firstResponse());
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
         $tools->expects(self::once())->method('callTool')->willThrowException(new ToolCallRefused('Outside scope.'));
         $loop = new AgentOrchestrator(new LlmService('', 'fixture', 'openai', httpClient:$http), $tools, contextTokens:8192, outputTokens:4096);
         self::assertSame('Outside scope.', $loop->run('Build.'));
@@ -97,7 +97,7 @@ final class ContextBudgetTerminationTest extends TestCase
             $http = $this->createMock(ClientInterface::class);
             $http->expects(self::exactly(2))->method('sendRequest')->willReturn($this->firstResponse());
             $tools = $this->createMock(GatedToolCalls::class);
-            $tools->method('getToolSummaries')->willReturn([]);
+            $tools->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
             $tools->expects(self::exactly(2))->method('callTool')->willReturn('Recorded');
             $loop = new AgentOrchestrator(new LlmService('', 'fixture', 'openai', httpClient:$http), $tools, maxSteps:2, contextTokens:$context, outputTokens:$output);
             self::assertSame(AgentOrchestrator::STEPS_EXHAUSTED, $loop->run('Build.'));

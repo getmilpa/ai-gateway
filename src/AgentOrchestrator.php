@@ -1002,6 +1002,24 @@ class AgentOrchestrator
                     $functionName = $toolCall['function']['name'];
                     $rawArguments = $toolCall['function']['arguments'] ?? '';
 
+                    // The provider can return a function absent from the catalogue sent on THIS
+                    // step. Do not ask the registry to execute it merely because it still exists
+                    // there. In lazy mode, an unknown but registered name is deliberately
+                    // auto-described below; keep that discovery contract unchanged.
+                    if (!$this->lazyTools && !\in_array($functionName, array_column($tools, 'name'), true)) {
+                        $output = "Tool '{$functionName}' was not offered in this step. Choose from the current catalogue: "
+                            . implode(', ', array_column($tools, 'name')) . '.';
+                        $this->log("Step $i: ⛔ UNOFFERED TOOL '$functionName': no registry call");
+                        $messages[] = [
+                            'role' => 'tool',
+                            'tool_call_id' => $toolCall['id'],
+                            'name' => $functionName,
+                            'content' => $output,
+                        ];
+
+                        continue;
+                    }
+
                     // DEBUG: Log raw arguments before parsing
                     $this->log("Step $i: 🔧 RAW ARGUMENTS (length=" . strlen($rawArguments) . "): " . substr($rawArguments, 0, 2000));
 

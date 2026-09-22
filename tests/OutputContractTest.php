@@ -52,7 +52,7 @@ final class OutputContractTest extends TestCase
                 return $this->response($provider, $stream, ++$requests === 1, $truncated && $requests === 1);
             });
             $mcp = $this->createMock(McpClientService::class);
-            $mcp->method('getToolSummaries')->willReturn([]);
+            $mcp->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
             $mcp->expects($truncated ? self::never() : self::exactly(2))->method('callTool')->willReturn(['ok' => true]);
             $loop = new AgentOrchestrator($this->gateway($client, $provider, $stream), $mcp, maxSteps: 3);
             $failure = null;
