@@ -86,14 +86,14 @@ final class OllamaCloudTest extends TestCase
             baseUrl: 'https://ollama.com/v1'
         );
 
-        $service->withOllamaReasoningEffort('low')->generateResponse('Build it.', maxTokens: 16384);
+        $service->withOllamaReasoningEffort('max')->generateResponse('Build it.', maxTokens: 16384);
 
         self::assertInstanceOf(RequestInterface::class, $request);
         $wire = json_decode((string) $request->getBody(), true);
-        self::assertSame('low', $wire['reasoning_effort']);
+        self::assertSame('max', $wire['reasoning_effort']);
         self::assertSame(16384, $wire['max_tokens']);
 
-        foreach (['', 'none', 'disabled', 'max'] as $effort) {
+        foreach (['', 'none', 'disabled', 'maximum'] as $effort) {
             try {
                 $service->withOllamaReasoningEffort($effort);
                 self::fail('Invalid reasoning effort accepted.');
