@@ -34,7 +34,7 @@ final class RunTerminationTest extends TestCase
         $llm = $this->createMock(LlmService::class);
         $llm->expects(self::once())->method('generateResponse')->willReturn(self::call());
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'read', 'description' => 'Read', 'inputSchema' => []]]);
         $tools->expects(self::once())->method('callTool')->willReturnCallback(static function () use ($result) {
             if ($result instanceof \Throwable) {
                 throw $result;
@@ -109,7 +109,7 @@ final class RunTerminationTest extends TestCase
     {
         foreach ([new ToolCallRefused('removed', optionRemoved:true),new \RuntimeException('tool failed')] as $error) {
             $tools = $this->createMock(GatedToolCalls::class);
-            $tools->method('getToolSummaries')->willReturn([]);
+            $tools->method('getToolSummaries')->willReturn([['name' => 'read', 'description' => 'Read', 'inputSchema' => []]]);
             $tools->expects(self::once())->method('callTool')->willThrowException($error);
             $llm = $this->createMock(LlmService::class);
             $llm->expects(self::exactly(2))->method('generateResponse')->willReturnOnConsecutiveCalls(self::call(), ['role' => 'assistant','content' => self::ANSWER]);
@@ -121,7 +121,7 @@ final class RunTerminationTest extends TestCase
     public function testExhaustionAndProgressReceiptAreTyped(): void
     {
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'read', 'description' => 'Read', 'inputSchema' => []]]);
         $tools->method('callTool')->willReturn('read');
         $llm = $this->createMock(LlmService::class);
         $llm->method('generateResponse')->willReturn(self::call());
@@ -140,7 +140,7 @@ final class RunTerminationTest extends TestCase
     public function testInvalidTextAndDeclaredDebtHaveDistinctCauses(): void
     {
         $tools = $this->createMock(GatedToolCalls::class);
-        $tools->method('getToolSummaries')->willReturn([]);
+        $tools->method('getToolSummaries')->willReturn([['name' => 'read', 'description' => 'Read', 'inputSchema' => []]]);
         $tools->method('callTool')->willReturn('read');
         $llm = $this->createMock(LlmService::class);
         $llm->method('generateResponse')->willReturn(['role' => 'assistant','content' => '<function=read>{}</function>']);
