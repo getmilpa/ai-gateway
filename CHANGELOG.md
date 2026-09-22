@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/getmilpa/ai-gateway/compare/v0.33.0...v0.33.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **agent:** refuse functions absent from current tool offer ([1588adc](https://github.com/getmilpa/ai-gateway/commit/1588adc31cb87e24e4bec2010ffbfd226f645f0a))
+
 ## [0.33.0](https://github.com/getmilpa/ai-gateway/compare/v0.32.0...v0.33.0) (2026-09-21)
 
 
