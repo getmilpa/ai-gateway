@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/getmilpa/ai-gateway/compare/v0.36.0...v0.37.0) (2026-09-23)
+
+
+### Features
+
+* allow explicit local reasoning effort ([b36268a](https://github.com/getmilpa/ai-gateway/commit/b36268afb39eeb4e2a388e8f58ab16664db23436))
+
 ## [0.36.0](https://github.com/getmilpa/ai-gateway/compare/v0.35.0...v0.36.0) (2026-09-22)
 
 
