@@ -137,4 +137,37 @@ final class OllamaCloudTest extends TestCase
         (new LlmService('test-key', 'claude-sonnet-4-6', 'anthropic'))
             ->withOllamaReasoningEffort('low');
     }
+
+    public function testExplicitChatTemplateThinkingIsSentOnlyWhenRequested(): void
+    {
+        foreach ([false, true] as $enabled) {
+            $request = null;
+            $http = $this->createMock(ClientInterface::class);
+            $http->expects(self::once())->method('sendRequest')->willReturnCallback(
+                static function (RequestInterface $sent) use (&$request): Response {
+                    $request = $sent;
+                    return new Response(200, [], (string) json_encode(['choices' => [[
+                        'finish_reason' => 'stop',
+                        'message' => ['role' => 'assistant', 'content' => 'Complete.'],
+                    ]]]));
+                }
+            );
+            (new LlmService(
+                'unused',
+                'qwen3.8-27b',
+                'openai',
+                httpClient: $http,
+                baseUrl: 'http://llama.local:11438/v1'
+            ))
+                ->withOpenAiThinking($enabled)
+                ->generateResponse('Build it.', maxTokens: 8192);
+
+            self::assertInstanceOf(RequestInterface::class, $request);
+            $wire = json_decode((string) $request->getBody(), true);
+            self::assertSame(['enable_thinking' => $enabled], $wire['chat_template_kwargs']);
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        (new LlmService('unused', 'claude-sonnet-4-6', 'anthropic'))->withOpenAiThinking(false);
+    }
 }

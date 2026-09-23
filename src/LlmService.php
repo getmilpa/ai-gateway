@@ -96,6 +96,7 @@ class LlmService implements LlmServiceInterface
     private ?StructuredOutput $structuredOutput = null;
     private ?string $miniMaxThinking = null;
     private ?string $ollamaReasoningEffort = null;
+    private ?bool $openAiThinking = null;
 
     /**
      * Fires ONCE PER REAL SSE CHUNK while the model is answering, so a live surface (the TUI
@@ -202,6 +203,23 @@ class LlmService implements LlmServiceInterface
         return $client;
     }
 
+    /**
+     * Explicitly enable or disable thinking in a compatible OpenAI chat template.
+     *
+     * The gateway does not infer support: omission preserves the endpoint's default, while an
+     * explicit choice sends the llama.cpp-compatible `chat_template_kwargs.enable_thinking`
+     * value unchanged.
+     */
+    public function withOpenAiThinking(bool $enabled): self
+    {
+        if ($this->provider !== 'openai') {
+            throw new \InvalidArgumentException('Chat-template thinking requires an OpenAI-compatible endpoint.');
+        }
+        $client = clone $this;
+        $client->openAiThinking = $enabled;
+        return $client;
+    }
+
     private function log(string $message): void
     {
         $this->logger?->debug("[LlmService] " . $message);
@@ -291,6 +309,10 @@ class LlmService implements LlmServiceInterface
 
         if ($this->ollamaReasoningEffort !== null) {
             $payload['reasoning_effort'] = $this->ollamaReasoningEffort;
+        }
+
+        if ($this->openAiThinking !== null) {
+            $payload['chat_template_kwargs'] = ['enable_thinking' => $this->openAiThinking];
         }
 
         if ($this->structuredOutput !== null) {

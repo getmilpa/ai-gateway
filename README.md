@@ -108,6 +108,9 @@ Use `$llm->withOllamaReasoningEffort('low')` (or `medium` / `high` / `max`) to s
 `reasoning_effort` option; omission preserves the model's default. The same explicit opt-in works
 for another OpenAI-compatible endpoint, including a local llama.cpp server whose chat template
 accepts the option. The gateway does not infer this capability for arbitrary hosts.
+For a compatible local chat template, `$llm->withOpenAiThinking(false)` explicitly sends
+`chat_template_kwargs.enable_thinking=false`; omission leaves the server's thinking behavior
+unchanged.
 
 ## Run termination
 
