@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/getmilpa/ai-gateway/compare/v0.37.0...v0.38.0) (2026-09-23)
+
+
+### Features
+
+* configure local chat template thinking ([c2e64f2](https://github.com/getmilpa/ai-gateway/commit/c2e64f233acb2165c35a1a41bf13f2b5d2d61885))
+
 ## [0.37.0](https://github.com/getmilpa/ai-gateway/compare/v0.36.0...v0.37.0) (2026-09-23)
 
 
