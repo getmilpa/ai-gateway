@@ -185,16 +185,17 @@ class LlmService implements LlmServiceInterface
     }
 
     /**
-     * Explicit reasoning effort for Ollama Cloud's OpenAI-compatible endpoint.
+     * Explicit reasoning effort for an OpenAI-compatible endpoint.
      *
-     * Omission preserves the model's default. Keeping this profile host-specific prevents an
-     * OpenAI-shaped local endpoint from receiving an option it never advertised.
+     * Omission preserves the model's default. This extension remains opt-in: callers that know
+     * their endpoint accepts `reasoning_effort` may request it without the gateway guessing from
+     * a hostname. That includes Ollama Cloud and local llama.cpp servers with a compatible chat
+     * template.
      */
     public function withOllamaReasoningEffort(string $effort): self
     {
-        if ($this->provider !== 'openai' || !$this->ollamaCloud
-            || !in_array($effort, ['low', 'medium', 'high', 'max'], true)) {
-            throw new \InvalidArgumentException('Ollama reasoning effort requires Ollama Cloud and low, medium, high or max.');
+        if ($this->provider !== 'openai' || !in_array($effort, ['low', 'medium', 'high', 'max'], true)) {
+            throw new \InvalidArgumentException('Reasoning effort requires an OpenAI-compatible endpoint and low, medium, high or max.');
         }
         $client = clone $this;
         $client->ollamaReasoningEffort = $effort;

@@ -105,7 +105,9 @@ only standard OpenAI message fields, and preserves Bearer authentication and nat
 responses. Both `https://ollama.com` and `https://ollama.com/v1` select this profile. Explicit
 MiniMax thinking is rejected before transport because that request extension is provider-specific.
 Use `$llm->withOllamaReasoningEffort('low')` (or `medium` / `high` / `max`) to send the documented
-`reasoning_effort` option; omission preserves the model's default.
+`reasoning_effort` option; omission preserves the model's default. The same explicit opt-in works
+for another OpenAI-compatible endpoint, including a local llama.cpp server whose chat template
+accepts the option. The gateway does not infer this capability for arbitrary hosts.
 
 ## Run termination
 

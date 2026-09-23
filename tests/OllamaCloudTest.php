@@ -65,7 +65,7 @@ final class OllamaCloudTest extends TestCase
         $service->withMiniMaxThinking('adaptive');
     }
 
-    public function testExplicitReasoningEffortIsSentOnlyToOllamaCloud(): void
+    public function testExplicitReasoningEffortIsSentToCompatibleCloudAndLocalEndpoints(): void
     {
         $request = null;
         $http = $this->createMock(ClientInterface::class);
@@ -98,11 +98,43 @@ final class OllamaCloudTest extends TestCase
                 $service->withOllamaReasoningEffort($effort);
                 self::fail('Invalid reasoning effort accepted.');
             } catch (\InvalidArgumentException $error) {
-                self::assertStringContainsString('Ollama reasoning effort', $error->getMessage());
+                self::assertStringContainsString('Reasoning effort', $error->getMessage());
             }
         }
+
+        $localRequest = null;
+        $localHttp = $this->createMock(ClientInterface::class);
+        $localHttp->expects(self::once())->method('sendRequest')->willReturnCallback(
+            static function (RequestInterface $sent) use (&$localRequest): Response {
+                $localRequest = $sent;
+                return new Response(200, [], (string) json_encode(['choices' => [[
+                    'finish_reason' => 'stop',
+                    'message' => ['role' => 'assistant', 'content' => 'Complete.'],
+                ]]]));
+            }
+        );
+        (new LlmService(
+            'unused',
+            'qwen3.8-27b',
+            'openai',
+            httpClient: $localHttp,
+            baseUrl: 'http://llama.local:11438/v1'
+        ))
+            ->withOllamaReasoningEffort('low')
+            ->generateResponse('Build it.', [[
+                'name' => 'probe_ready',
+                'description' => 'Report readiness.',
+                'inputSchema' => ['type' => 'object', 'properties' => []],
+            ]], maxTokens: 6144);
+
+        self::assertInstanceOf(RequestInterface::class, $localRequest);
+        $localWire = json_decode((string) $localRequest->getBody(), true);
+        self::assertSame('low', $localWire['reasoning_effort']);
+        self::assertSame(6144, $localWire['max_completion_tokens']);
+        self::assertSame('auto', $localWire['tool_choice']);
+
         $this->expectException(\InvalidArgumentException::class);
-        (new LlmService('test-key', 'glm-5.3-flash', 'openai'))
+        (new LlmService('test-key', 'claude-sonnet-4-6', 'anthropic'))
             ->withOllamaReasoningEffort('low');
     }
 }
