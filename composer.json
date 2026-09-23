@@ -53,7 +53,7 @@
                 "id": "agent-runs",
                 "title": "A model on the other side: the orchestrator that turns a request into steps",
                 "unlocks": [
-                    "coa agent \"…\""
+                    "php bin/coa agent \"…\""
                 ],
                 "provides": [
                     "agent.model"
