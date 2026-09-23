@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.1](https://github.com/getmilpa/ai-gateway/compare/v0.38.0...v0.38.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **manifest:** the capability names a command that runs ([#114](https://github.com/getmilpa/ai-gateway/issues/114)) ([a48ddde](https://github.com/getmilpa/ai-gateway/commit/a48ddde66c7c47cf3de56befbd32948f156109b6))
+
 ## [0.38.0](https://github.com/getmilpa/ai-gateway/compare/v0.37.0...v0.38.0) (2026-09-23)
 
 
