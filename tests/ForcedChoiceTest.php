@@ -17,6 +17,7 @@ namespace Milpa\AiGateway\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Milpa\AiGateway\AgentOrchestrator;
+use Milpa\AiGateway\RunEnd;
 use Milpa\AiGateway\LlmService;
 use Milpa\AiGateway\McpClientService;
 use Milpa\AiGateway\ProgressProbe;
@@ -171,6 +172,54 @@ class ForcedChoiceTest extends TestCase
 
         self::assertStringStartsWith(AgentOrchestrator::PROGRESS_STALLED, $result, 'the sentinel names the end');
         self::assertStringContainsString('"newEvidence":0', $result, 'the receipt travels in the answer');
+    }
+
+    /**
+     * FINISHING IS A WAY OUT (greenhouse decisions/0476): with the producer's recorded work complete, the
+     * same plain answer that would end the leg stalled is the final answer.
+     */
+    public function testAfterACompleteNoticeAPlainAnswerIsTheFinalAnswer(): void
+    {
+        $this->toolsOnTheTable();
+
+        $asked = [];
+        $probe = $this->probeAnswering(
+            ['stalled' => true, 'notice' => self::NOTICE, 'receipt' => ['calls' => 4], 'recovery' => 'pending', 'complete' => true],
+            $asked,
+        );
+        $this->llmService->expects($this->exactly(2))
+            ->method('generateResponse')
+            ->willReturnOnConsecutiveCalls(
+                self::toolCallTurn(),
+                ['role' => 'assistant', 'content' => 'The page is served in the house; both todos are closed with evidence.'],
+            );
+
+        $orchestrator = $this->orchestratorWith($probe);
+        $result = $orchestrator->run('build the page');
+
+        self::assertStringNotContainsString(AgentOrchestrator::PROGRESS_STALLED, $result);
+        self::assertStringContainsString('The page is served in the house', $result);
+        self::assertSame(RunEnd::FinalAnswer, $orchestrator->termination()?->reason);
+    }
+
+    /** Without the mark, the same answer still ends stalled: prose instead of the work keeps no way out. */
+    public function testWithoutTheCompleteMarkTheSamePlainAnswerStillStalls(): void
+    {
+        $this->toolsOnTheTable();
+
+        $asked = [];
+        $probe = $this->probeAnswering(
+            ['stalled' => true, 'notice' => self::NOTICE, 'receipt' => ['calls' => 4], 'recovery' => 'pending', 'complete' => false],
+            $asked,
+        );
+        $this->llmService->method('generateResponse')->willReturnOnConsecutiveCalls(
+            self::toolCallTurn(),
+            ['role' => 'assistant', 'content' => 'The page is served in the house; both todos are closed with evidence.'],
+        );
+
+        $orchestrator = $this->orchestratorWith($probe);
+        self::assertStringStartsWith(AgentOrchestrator::PROGRESS_STALLED, $orchestrator->run('build the page'));
+        self::assertSame(RunEnd::ProgressStalled, $orchestrator->termination()?->reason);
     }
 
     /** A post-notice response WITH tool calls proceeds normally — acting IS option A. */
