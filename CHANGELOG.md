@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/getmilpa/ai-gateway/compare/v0.38.2...v0.39.0) (2026-09-26)
+
+
+### Features
+
+* **orchestrator:** the epilogue ([#118](https://github.com/getmilpa/ai-gateway/issues/118)) ([8e8877f](https://github.com/getmilpa/ai-gateway/commit/8e8877f3939416f140b185ddd74e6726b62bae1d))
+
 ## [0.38.2](https://github.com/getmilpa/ai-gateway/compare/v0.38.1...v0.38.2) (2026-09-26)
 
 
