@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.2](https://github.com/getmilpa/ai-gateway/compare/v0.38.1...v0.38.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **orchestrator:** finishing is a way out ([#116](https://github.com/getmilpa/ai-gateway/issues/116)) ([24054fc](https://github.com/getmilpa/ai-gateway/commit/24054fca5dc02f1e43718542b6223f95ff63e599))
+
 ## [0.38.1](https://github.com/getmilpa/ai-gateway/compare/v0.38.0...v0.38.1) (2026-09-23)
 
 
