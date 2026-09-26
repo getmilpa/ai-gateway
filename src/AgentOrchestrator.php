@@ -54,6 +54,13 @@ class AgentOrchestrator
     public const PROGRESS_STALLED = 'Error: Agent progress stalled.';
 
     /**
+     * What a leg answers when the epilogue's budget ran out before a final answer (greenhouse 0477). It
+     * states only what the house verified — the work phase closed — and never stands in for the answer.
+     */
+    public const EPILOGUE_EXHAUSTED = 'The work phase closed with its obligations verified by the house; '
+        . 'the epilogue budget ended before the model gave its final answer.';
+
+    /**
      * The marker a post-notice answer starts with to declare framework-owned debt and end the leg —
      * the content returns verbatim, and the CALLER records the debt (option B of the forced choice).
      */
@@ -680,9 +687,9 @@ class AgentOrchestrator
      * Legacy probes retain their one-answer notice contract. An explicit pending recovery is
      * retained through absent or failed observations, and only its producer can clear or exhaust it.
      *
-     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null $pending
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool, epilogue?: int}|null $pending
      *
-     * @return array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null
+     * @return array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool, epilogue?: int}|null
      */
     private function consultProgressProbe(int $step, ?array $pending = null): ?array
     {
@@ -699,6 +706,17 @@ class AgentOrchestrator
             return $fallback;
         }
 
+        // THE EPILOGUE (greenhouse decisions/0477) outranks a stall: the producer verified the work phase
+        // closed, so what remains is writing the output — within its budget. Announced once; `0` ends it.
+        if ($answer !== null && \is_int($answer['epilogue'] ?? null)) {
+            if ($answer['epilogue'] <= 0) {
+                return ['notice' => '', 'receipt' => $answer['receipt'], 'epilogue' => 0];
+            }
+
+            return trim($answer['notice']) === ''
+                ? null
+                : ['notice' => $answer['notice'], 'receipt' => $answer['receipt'], 'complete' => true, 'epilogue' => $answer['epilogue']];
+        }
         if ($answer !== null && ($answer['recovery'] ?? null) === 'recovered' && $answer['stalled'] === false) {
             return null;
         }
@@ -724,7 +742,7 @@ class AgentOrchestrator
     /**
      * Return the existing stalled sentinel with the producer's latest receipt, never a new count.
      *
-     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool} $stall
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool, epilogue?: int} $stall
      */
     private function stalledResult(array $stall): string
     {
@@ -865,7 +883,7 @@ class AgentOrchestrator
         // the notice rides the NEXT call as one appended user-role steering line and the answer to it is held
         // to the choice — act, declare debt, abandon, or the leg ends. Explicit recovery persists
         // across preparation; a legacy notice still covers one answer. `null` when nothing is due.
-        /** @var array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null $pendingStall */
+        /** @var array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool, epilogue?: int}|null $pendingStall */
         $pendingStall = null;
 
         for ($i = 0; $i < $this->maxSteps; $i++) {
@@ -1183,6 +1201,11 @@ class AgentOrchestrator
                 // The producer judges the completed step. Preparation may continue, but calling
                 // a tool cannot clear a measured recovery or postpone its exhausted window.
                 $pendingStall = $this->consultProgressProbe($i, $pendingStall);
+                if (($pendingStall['epilogue'] ?? null) === 0) {
+                    $this->log("Step $i: the epilogue's budget is spent — the leg ends (0477)");
+
+                    return $this->finish(RunEnd::EpilogueExhausted, self::EPILOGUE_EXHAUSTED);
+                }
                 if (($pendingStall['recovery'] ?? null) === 'exhausted') {
                     return $this->stalledResult($pendingStall);
                 }
@@ -1230,6 +1253,9 @@ class AgentOrchestrator
                         // abandoned — and the loop continues under the same measurement.
                         $this->log("Step $i: hypothesis abandoned — the loop continues");
                         $pendingStall = $this->consultProgressProbe($i, $pendingStall);
+                        if (($pendingStall['epilogue'] ?? null) === 0) {
+                            return $this->finish(RunEnd::EpilogueExhausted, self::EPILOGUE_EXHAUSTED);
+                        }
                         if (($pendingStall['recovery'] ?? null) === 'exhausted') {
                             return $this->stalledResult($pendingStall);
                         }

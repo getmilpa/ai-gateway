@@ -28,4 +28,6 @@ enum RunEnd: string
     case Interrupted = 'interrupted';
     case OutputTruncated = 'output_truncated';
     case Failed = 'failed';
+    /** The work phase closed verified and the epilogue's budget ran out before a final answer (greenhouse 0477). */
+    case EpilogueExhausted = 'epilogue_exhausted';
 }

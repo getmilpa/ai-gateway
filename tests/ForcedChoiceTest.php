@@ -222,6 +222,91 @@ class ForcedChoiceTest extends TestCase
         self::assertSame(RunEnd::ProgressStalled, $orchestrator->termination()?->reason);
     }
 
+    /** A probe that answers a scripted sequence, then no opinion. */
+    private function probeScripted(array $answers, int &$asked): ProgressProbe
+    {
+        return new class ($answers, $asked) implements ProgressProbe {
+            private int $asked;
+
+            public function __construct(private array $answers, int &$asked)
+            {
+                $this->asked = &$asked;
+            }
+
+            public function afterStep(int $step): ?array
+            {
+                ++$this->asked;
+
+                return array_shift($this->answers);
+            }
+        };
+    }
+
+    /** THE EPILOGUE (greenhouse decisions/0477): announced once, a plain answer inside it is the final answer. */
+    public function testInsideTheEpilogueAPlainAnswerIsTheFinalAnswer(): void
+    {
+        $this->toolsOnTheTable();
+        $asked = 0;
+        $probe = $this->probeScripted([['stalled' => false, 'notice' => 'EPILOGUE: the work phase closed.', 'receipt' => [], 'epilogue' => 2]], $asked);
+        $seen = [];
+        $this->llmService->method('generateResponse')->willReturnCallback(function (string $p, array $t, array $messages) use (&$seen): array {
+            $seen[] = $messages;
+
+            return \count($seen) === 1 ? self::toolCallTurn() : ['role' => 'assistant', 'content' => 'Done: the page is served.'];
+        });
+
+        $orchestrator = $this->orchestratorWith($probe);
+        self::assertStringContainsString('Done: the page is served.', $orchestrator->run('build'));
+        self::assertSame(RunEnd::FinalAnswer, $orchestrator->termination()?->reason);
+        self::assertStringContainsString('EPILOGUE: the work phase closed.', json_encode($seen[1]) ?: '', 'announced on the next call');
+    }
+
+    /** A model that keeps working inside the epilogue gets exactly its budget, then the leg ends with its own cause. */
+    public function testAnEpilogueThatKeepsWorkingEndsAfterItsBudget(): void
+    {
+        $this->toolsOnTheTable();
+        $asked = 0;
+        $probe = $this->probeScripted([
+            ['stalled' => false, 'notice' => 'EPILOGUE: the work phase closed.', 'receipt' => [], 'epilogue' => 2],
+            ['stalled' => false, 'notice' => '', 'receipt' => [], 'epilogue' => 1],
+            ['stalled' => false, 'notice' => '', 'receipt' => [], 'epilogue' => 0],
+        ], $asked);
+        $calls = 0;
+        $this->llmService->method('generateResponse')->willReturnCallback(function () use (&$calls): array {
+            ++$calls;
+
+            return self::toolCallTurn('c' . $calls);
+        });
+
+        $orchestrator = $this->orchestratorWith($probe, maxSteps: 10);
+        self::assertSame(AgentOrchestrator::EPILOGUE_EXHAUSTED, $orchestrator->run('build'));
+        self::assertSame(RunEnd::EpilogueExhausted, $orchestrator->termination()?->reason);
+        self::assertSame(3, $calls, 'the closing call, then exactly the two the epilogue allows');
+    }
+
+    /** Reopened work (no epilogue in the answer) is the work phase again: nothing is cut. */
+    public function testReopenedWorkIsNotCutByTheEpilogue(): void
+    {
+        $this->toolsOnTheTable();
+        $asked = 0;
+        $probe = $this->probeScripted([
+            ['stalled' => false, 'notice' => 'EPILOGUE: the work phase closed.', 'receipt' => [], 'epilogue' => 2],
+            null,
+            null,
+            null,
+        ], $asked);
+        $calls = 0;
+        $this->llmService->method('generateResponse')->willReturnCallback(function () use (&$calls): array {
+            ++$calls;
+
+            return $calls < 5 ? self::toolCallTurn('c' . $calls) : ['role' => 'assistant', 'content' => 'Reopened and finished.'];
+        });
+
+        $orchestrator = $this->orchestratorWith($probe, maxSteps: 10);
+        self::assertStringContainsString('Reopened and finished.', $orchestrator->run('build'));
+        self::assertSame(5, $calls);
+    }
+
     /** A post-notice response WITH tool calls proceeds normally — acting IS option A. */
     public function testAPostNoticeToolCallProceedsNormally(): void
     {

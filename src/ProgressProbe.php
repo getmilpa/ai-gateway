@@ -58,9 +58,16 @@ interface ProgressProbe
      * plain answer after it IS a final answer, not a stall: finishing is a way out, while prose instead
      * of the work stays without one wherever the work is not complete.
      *
+     * The optional `epilogue` (int) opens the EPILOGUE (greenhouse decisions/0477): the producer verified
+     * that the work phase closed, and this is how many model calls remain to write the output. A nonempty
+     * notice announces it once and a plain answer after it is final; `0` ends the leg before another model
+     * call with its own cause, `epilogue_exhausted`. The producer owns the count and its reopening — the
+     * loop never infers closure. Terminating a task is the agent's judgement; verifying it is the house's;
+     * how much budget the output deserves after closure is the house's policy.
+     *
      * @param int $step the zero-based loop step that just completed
      *
-     * @return array{stalled: bool, notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'recovered'|'exhausted', complete?: bool}|null
+     * @return array{stalled: bool, notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'recovered'|'exhausted', complete?: bool, epilogue?: int}|null
      */
     public function afterStep(int $step): ?array;
 }
