@@ -53,9 +53,14 @@ interface ProgressProbe
      * and its budget; the loop never infers progress from tool names, success, or receipt fields.
      * An unavailable observer cannot invent recovery or expiry; the total step budget still holds.
      *
+     * The optional `complete` (bool) says the producer's RECORDED work is complete — every tracked item
+     * closed with evidence (greenhouse decisions/0476). The notice then asks for the final answer, and a
+     * plain answer after it IS a final answer, not a stall: finishing is a way out, while prose instead
+     * of the work stays without one wherever the work is not complete.
+     *
      * @param int $step the zero-based loop step that just completed
      *
-     * @return array{stalled: bool, notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'recovered'|'exhausted'}|null
+     * @return array{stalled: bool, notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'recovered'|'exhausted', complete?: bool}|null
      */
     public function afterStep(int $step): ?array;
 }

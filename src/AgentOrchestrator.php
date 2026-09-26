@@ -680,9 +680,9 @@ class AgentOrchestrator
      * Legacy probes retain their one-answer notice contract. An explicit pending recovery is
      * retained through absent or failed observations, and only its producer can clear or exhaust it.
      *
-     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null $pending
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null $pending
      *
-     * @return array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null
+     * @return array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null
      */
     private function consultProgressProbe(int $step, ?array $pending = null): ?array
     {
@@ -712,13 +712,19 @@ class AgentOrchestrator
             default => [],
         };
 
+        // THE RECORDED WORK IS COMPLETE (greenhouse decisions/0476): the notice travels marked, so the
+        // enforcement below accepts a plain answer as the final answer it is.
+        if (($answer['complete'] ?? false) === true) {
+            $state['complete'] = true;
+        }
+
         return ['notice' => $answer['notice'], 'receipt' => $answer['receipt']] + $state;
     }
 
     /**
      * Return the existing stalled sentinel with the producer's latest receipt, never a new count.
      *
-     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'} $stall
+     * @param array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool} $stall
      */
     private function stalledResult(array $stall): string
     {
@@ -859,7 +865,7 @@ class AgentOrchestrator
         // the notice rides the NEXT call as one appended user-role steering line and the answer to it is held
         // to the choice — act, declare debt, abandon, or the leg ends. Explicit recovery persists
         // across preparation; a legacy notice still covers one answer. `null` when nothing is due.
-        /** @var array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted'}|null $pendingStall */
+        /** @var array{notice: string, receipt: array<string, mixed>, recovery?: 'pending'|'exhausted', complete?: bool}|null $pendingStall */
         $pendingStall = null;
 
         for ($i = 0; $i < $this->maxSteps; $i++) {
@@ -1231,12 +1237,20 @@ class AgentOrchestrator
                         continue;
                     }
 
-                    // Option E — more prose about the work instead of the work — does not exist.
-                    // The leg ends as an honest stall, the receipt riding the answer so the
-                    // surface can show why.
-                    $this->log("Step $i: post-notice answer took none of the forced options — leg ends stalled");
+                    // FINISHING IS A WAY OUT (greenhouse decisions/0476). When the producer marked the
+                    // notice `complete` — every tracked item closed with evidence — the plain answer is
+                    // the final answer, and it takes the ordinary path below. Measured: without this, a
+                    // model whose work was done and verified could only obey the choice by inventing
+                    // more work (a scaffold nobody asked for; the whole suite, to produce «evidence»).
+                    if (($noticeThisCall['complete'] ?? false) !== true) {
+                        // Option E — more prose about the work instead of the work — does not exist.
+                        // The leg ends as an honest stall, the receipt riding the answer so the
+                        // surface can show why.
+                        $this->log("Step $i: post-notice answer took none of the forced options — leg ends stalled");
 
-                    return $this->stalledResult($noticeThisCall);
+                        return $this->stalledResult($noticeThisCall);
+                    }
+                    $this->log("Step $i: post-notice answer with the recorded work complete — a final answer");
                 }
 
                 // ── A DEGENERATE ANSWER GETS ONE GUIDED RETRY ───────────────────────────────────
