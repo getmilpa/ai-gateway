@@ -73,14 +73,19 @@ final class OutputBudgetTest extends TestCase
                 self::assertSame(8192, json_decode((string)$request->getBody(), true)['max_completion_tokens']);
                 if (++$calls === 1) {
                     if ($path === 'context') {
-                        return new Response(400, [], json_encode(['error' => ['type' => 'exceed_context_size_error','n_prompt_tokens' => 33000,'n_ctx' => 32768,'message' => 'request exceeds the available context size']]));
+                        // The provider's count of THIS request, just over the wall: the heal elides
+                        // the oldest recorded results and sends a smaller request.
+                        $count = intdiv(strlen((string)$request->getBody()), 4) + 1;
+                        return new Response(400, [], json_encode(['error' => ['type' => 'exceed_context_size_error','n_prompt_tokens' => 24577 + $count % 7,'n_ctx' => 24576,'message' => 'request exceeds the available context size']]));
                     }
                     return $this->answer('', str_repeat('synthetic ', 1000));
                 }
                 return $this->answer();
             });
             $loop = new AgentOrchestrator(new LlmService('', 'fixture', 'openai', httpClient:$http), $this->tools(), contextTokens:32768, outputTokens:8192);
-            self::assertStringEndsWith('The complete answer.', $loop->run('Answer.'));
+            // Six recorded results, each ~2.5k estimated tokens: the heal has older ones to elide.
+            $history = array_map(static fn (int $n): array => ['role' => 'tool', 'content' => str_repeat("result {$n} ", 900)], range(1, 6));
+            self::assertStringEndsWith('The complete answer.', $loop->run('Answer.', 'You answer.', $history));
         }
     }
 

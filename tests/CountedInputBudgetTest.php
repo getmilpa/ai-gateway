@@ -6,7 +6,7 @@ declare(strict_types=1);
 namespace Milpa\AiGateway\Tests;
 
 use GuzzleHttp\Psr7\Response;
-use Milpa\AiGateway\{AgentOrchestrator,InputBudgetExceededException,InputBudgetUnavailableException,LlmService,McpClientService};
+use Milpa\AiGateway\{AgentOrchestrator,ContextExceededException,InputBudgetExceededException,InputBudgetUnavailableException,LlmService,McpClientService};
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientInterface;
@@ -23,9 +23,10 @@ final class CountedInputBudgetTest extends TestCase
                 'after-tool' => [['tool', 'exceeded'], 'context_budget_exhausted'],
                 'unknown-initial' => [['unavailable'], 'failed'],
                 'unknown-after-tool' => [['tool', 'unavailable'], 'failed'],
-                'http-heal-initial' => [['http400', 'exceeded'], 'failed'],
-                'http-heal-after-tool' => [['tool', 'http400', 'exceeded'], 'context_budget_exhausted'],
-                'http-heal-unknown' => [['http400', 'unavailable'], 'failed'],
+                // A provider 400 on a request nothing can shrink is NOT resent (greenhouse
+                // decisions/0514): the counter is never consulted a second time.
+                'http-heal-initial' => [['http400'], 'failed'],
+                'http-heal-after-tool' => [['tool', 'http400'], 'context_budget_exhausted'],
                 'boundary-fits' => [['answer'], 'final_answer'],
             ] as $path => [$flow, $end]) {
                 yield $surface . '/' . $path => [$surface, $flow, $end];
@@ -52,7 +53,18 @@ final class CountedInputBudgetTest extends TestCase
         self::assertSame($expectedEnd, $end['reason']);
         self::assertSame(count($flow), $facts->attempts, 'No retry follows a local refusal.');
         self::assertSame(count(array_filter($flow, fn ($v) => !in_array($v, ['exceeded', 'unavailable']))), $facts->dispatches);
-        if ($expectedEnd === 'failed') {
+        if (in_array('http400', $flow, true)) {
+            // The provider's own refusal: surfaced verbatim on a first call, a measured pause after one.
+            if ($expectedEnd === 'failed') {
+                self::assertInstanceOf(ContextExceededException::class, $error);
+            } else {
+                self::assertNull($error);
+                self::assertSame(AgentOrchestrator::CONTEXT_BUDGET_EXHAUSTED, $answer);
+                self::assertSame('provider_measured', $end['receipt']['source']);
+                self::assertSame(33000, $end['receipt']['providerPromptTokens']);
+                self::assertSame(1, $end['receipt']['completedSteps']);
+            }
+        } elseif ($expectedEnd === 'failed') {
             self::assertSame($facts->refusal, $error, 'The exact typed exception survives streaming and recovery.');
             self::assertSame($error->receipt(), $end['receipt']);
         } elseif ($expectedEnd === 'context_budget_exhausted') {
