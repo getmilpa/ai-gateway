@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/getmilpa/ai-gateway/compare/v0.39.0...v0.39.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **orchestrator:** obey the window the house knows (reserve the requested output, calibrate on the provider's count, never resend an unshrinkable request) ([#120](https://github.com/getmilpa/ai-gateway/issues/120)) ([9a00cbd](https://github.com/getmilpa/ai-gateway/commit/9a00cbde1ffd15f49f8c4d12b1a6f1ed1b57e3cb))
+
 ## [0.39.0](https://github.com/getmilpa/ai-gateway/compare/v0.38.2...v0.39.0) (2026-09-26)
 
 
