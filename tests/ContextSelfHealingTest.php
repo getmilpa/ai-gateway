@@ -207,10 +207,11 @@ final class ContextSelfHealingTest extends TestCase
 
     /**
      * Falsifier 3: HONEST SURRENDER — a protected set alone too big for the provider's window
-     * cannot be healed by elision: after the bounded heals the verbatim error surfaces, and
-     * never more than 1 + MAX_CONTEXT_HEALS sends are spent.
+     * cannot be healed by elision, so nothing smaller exists to send: the verbatim error surfaces
+     * on the FIRST 400, and the identical request is never resent (greenhouse decisions/0514 —
+     * evidence/1036 paid three identical ~50k-token sends, twice, for the same answer).
      */
-    public function testAProtectedSetAloneTooBigSurrendersWithTheVerbatimErrorAfterBoundedHeals(): void
+    public function testAProtectedSetAloneTooBigSurrendersOnTheFirst400WithoutResendingIt(): void
     {
         $client = $this->exceedingProviderClient(self::PROVIDER_CTX_TOKENS, [], $sends, $statuses);
         $llm = new LlmService('key', 'qwen', 'openai', null, $client);
@@ -230,8 +231,8 @@ final class ContextSelfHealingTest extends TestCase
             self::assertStringContainsString('exceeds the available context size', $e->getMessage(), 'the verbatim provider error surfaces');
         }
 
-        self::assertCount(3, $sends, 'one original call plus exactly MAX_CONTEXT_HEALS healing retries, then surrender');
-        self::assertSame([400, 400, 400], $statuses);
+        self::assertCount(1, $sends, 'a heal that cannot shrink the request resends nothing');
+        self::assertSame([400], $statuses);
     }
 
     /**

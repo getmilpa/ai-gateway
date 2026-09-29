@@ -93,6 +93,15 @@ class LlmService implements LlmServiceInterface
     private array $extraHeaders;
     private ?LoggerInterface $logger;
     private ?ChannelObserver $channelObserver;
+
+    /**
+     * The usage the provider spoke for the LAST call, normalized, or null when it spoke none.
+     * The orchestrator calibrates its size estimate against this count (greenhouse
+     * decisions/0514): the provider's own number is the only ruler that cannot under-count.
+     *
+     * @var array{prompt_tokens: int, completion_tokens: int, total_tokens: int, cached_tokens?: int}|null
+     */
+    private ?array $lastUsage = null;
     private ?StructuredOutput $structuredOutput = null;
     private ?string $miniMaxThinking = null;
     private ?string $ollamaReasoningEffort = null;
@@ -250,6 +259,7 @@ class LlmService implements LlmServiceInterface
         if ($maxTokens < 1) {
             throw new \InvalidArgumentException('maxTokens must be positive.');
         }
+        $this->lastUsage = null;
         if (empty($messages)) {
             $messages = [
                 ['role' => 'user', 'content' => $prompt],
@@ -278,6 +288,18 @@ class LlmService implements LlmServiceInterface
         return $this->provider === 'anthropic' || str_contains($this->model, 'claude')
             ? $this->formatToolsForAnthropic($tools)
             : $this->formatToolsForOpenAi($tools);
+    }
+
+    /**
+     * The usage the provider reported for the most recent call — its own token count — or null
+     * when that call reported none (or failed before a response). Reset at the start of every
+     * {@see generateResponse()}, so a stale count never describes a newer request.
+     *
+     * @return array{prompt_tokens: int, completion_tokens: int, total_tokens: int, cached_tokens?: int}|null
+     */
+    public function lastUsage(): ?array
+    {
+        return $this->lastUsage;
     }
 
     /**
@@ -949,12 +971,9 @@ class LlmService implements LlmServiceInterface
      */
     private function emitReturn(string $uri, ?array $rawUsage): void
     {
-        if (!$this->channelObserver instanceof ReturnObserver) {
-            return;
-        }
-
         $usage = $this->normalizeUsage($rawUsage);
-        if ($usage === null) {
+        $this->lastUsage = $usage;
+        if (!$this->channelObserver instanceof ReturnObserver || $usage === null) {
             return;
         }
 

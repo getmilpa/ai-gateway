@@ -97,6 +97,15 @@ class AgentOrchestrator
     private const LEG_BUDGET_FRACTION = 0.75;
 
     /**
+     * The output limit the gateway REQUESTS when the caller declared none — the same 4096
+     * {@see LlmService::generateResponse()} has always sent. Since greenhouse decisions/0514 it is
+     * also the reserve the input budget keeps: evidence/1036 measured a house that asked for 4096
+     * output tokens while budgeting its input as if the output needed no room, and sent 49,582 and
+     * 50,772 tokens into a 49,152 window.
+     */
+    private const DEFAULT_OUTPUT_TOKENS = 4096;
+
+    /**
      * The newest tool results that never elide — the model's working set. Everything it is
      * actively reasoning about rides in full; only results older than these are candidates.
      */
@@ -240,6 +249,24 @@ class AgentOrchestrator
      * from {@see LEG_BUDGET_FRACTION}.
      */
     private int $learnedLegBudgetTokens = 0;
+
+    /**
+     * Provider tokens per estimated token — the chars/{@see ESTIMATED_CHARS_PER_TOKEN} ruler
+     * calibrated against the provider's OWN count (greenhouse decisions/0514). `1.0` until the
+     * provider reports a count this leg; then the largest ratio seen so far: it can only tighten.
+     * evidence/1036 measured the uncalibrated ruler under-counting a qwen request by a third, so a
+     * projection «within budget» by the estimate reached 48.7k of a 49,152 window. Reset per leg,
+     * like {@see learnedLegBudgetTokens}.
+     */
+    private float $providerTokensPerEstimate = 1.0;
+
+    /**
+     * Whether the provider reported a count this leg. Until it does, an UNDECLARED output limit
+     * refuses nothing before egress: an uncalibrated estimate is a guess, and a guess that refuses
+     * a request the provider would take is a new failure, not a fix. A declared limit refuses as it
+     * always has. Reset per leg.
+     */
+    private bool $rulerCalibrated = false;
 
     public function __construct(
         LlmService $llm,
@@ -475,7 +502,84 @@ class AgentOrchestrator
             ? $this->learnedLegBudgetTokens
             : (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION);
 
-        return $this->outputTokens === null ? $budget : min($budget, $this->contextTokens - $this->outputTokens);
+        return min($budget, $this->contextTokens - $this->reservedOutputTokens());
+    }
+
+    /**
+     * The output limit this loop requests on every call, and therefore the room every request must
+     * leave free: the caller's declared limit, else {@see DEFAULT_OUTPUT_TOKENS}. A reserve smaller
+     * than what is requested is the defect of evidence/1036 — the request fits and the answer
+     * does not.
+     */
+    private function reservedOutputTokens(): int
+    {
+        if ($this->outputTokens !== null) {
+            return $this->outputTokens;
+        }
+        if ($this->contextTokens <= 0) {
+            return self::DEFAULT_OUTPUT_TOKENS;
+        }
+
+        // A small declared window cannot give 4096 to the answer: it gets the share the leg budget
+        // already leaves free, so the reserve never cuts under LEG_BUDGET_FRACTION. Windows of
+        // 16,384 tokens and more keep exactly 4096.
+        return max(1, min(self::DEFAULT_OUTPUT_TOKENS, $this->contextTokens - (int) floor($this->contextTokens * self::LEG_BUDGET_FRACTION)));
+    }
+
+    /**
+     * Whether an over-budget request is refused before egress: always under a declared output
+     * limit, and under the default one only once the provider has calibrated the ruler this leg.
+     */
+    private function refusesBeforeEgress(): bool
+    {
+        return $this->outputTokens !== null || $this->rulerCalibrated;
+    }
+
+    /**
+     * The request's size in provider tokens, as well as this loop can know it before egress: the
+     * chars/{@see ESTIMATED_CHARS_PER_TOKEN} estimate of messages plus tools, scaled by the ratio
+     * the provider itself reported this leg ({@see providerTokensPerEstimate}).
+     *
+     * @param list<array<string, mixed>> $projection the messages about to go out
+     * @param list<array<string, mixed>> $tools      the tool summaries riding the same request
+     */
+    private function requestTokens(array $projection, array $tools): int
+    {
+        $estimate = $this->estimateProjectionTokens($projection) + $this->estimateToolsTokens($tools);
+
+        return (int) ceil($estimate * $this->providerTokensPerEstimate);
+    }
+
+    /**
+     * Learn the provider's ruler from one count it spoke about a request this loop sent: the ratio
+     * of its tokens to this class's estimate of the same request. Only a LARGER ratio is kept — one
+     * count cannot loosen what an earlier one taught — and a count that says nothing (absent, zero,
+     * or an estimate of zero) teaches nothing.
+     *
+     * @param int|null                   $providerTokens the provider's own count of that request
+     * @param list<array<string, mixed>> $projection     the messages that request carried
+     * @param list<array<string, mixed>> $tools          the tools that rode with them
+     */
+    private function calibrate(?int $providerTokens, array $projection, array $tools): void
+    {
+        if ($providerTokens === null || $providerTokens <= 0) {
+            return;
+        }
+        $estimate = $this->estimateProjectionTokens($projection) + $this->estimateToolsTokens($tools);
+        if ($estimate <= 0) {
+            return;
+        }
+        $ratio = $providerTokens / $estimate;
+        $this->rulerCalibrated = true;
+        if ($ratio > $this->providerTokensPerEstimate) {
+            $this->providerTokensPerEstimate = $ratio;
+        }
+    }
+
+    /** The prompt tokens the provider counted on the last successful call, when it said. */
+    private function lastPromptTokens(): ?int
+    {
+        return $this->llm->lastUsage()['prompt_tokens'] ?? null;
     }
 
     /**
@@ -490,11 +594,11 @@ class AgentOrchestrator
      */
     private function generateResponse(string $prompt, array $tools, array $messages): array
     {
-        if ($this->exceededInputBudget($tools, $messages) !== null) {
+        if ($this->refusesBeforeEgress() && $this->exceededInputBudget($tools, $messages) !== null) {
             throw new \LengthException('The estimated input leaves no room for the declared output budget.');
         }
 
-        return $this->llm->generateResponse($prompt, $tools, $messages, $this->outputTokens ?? 4096);
+        return $this->llm->generateResponse($prompt, $tools, $messages, $this->reservedOutputTokens());
     }
 
     /** One ruler for refusal and the between-step pause; never a provider token count.
@@ -505,15 +609,15 @@ class AgentOrchestrator
      */
     private function exceededInputBudget(array $tools, array $messages): ?array
     {
-        if ($this->outputTokens === null || $this->contextTokens <= 0) {
+        if ($this->contextTokens <= 0) {
             return null;
         }
-        $estimate = $this->estimateProjectionTokens($messages) + $this->estimateToolsTokens($tools);
-        $limit = $this->contextTokens - $this->outputTokens;
+        $estimate = $this->requestTokens($messages, $tools);
+        $limit = $this->contextTokens - $this->reservedOutputTokens();
         return $estimate > $limit ? [
             'estimatedInputTokens' => $estimate,
             'contextTokens' => $this->contextTokens,
-            'outputTokens' => $this->outputTokens,
+            'outputTokens' => $this->reservedOutputTokens(),
             'inputLimitTokens' => $limit,
         ] : null;
     }
@@ -552,7 +656,7 @@ class AgentOrchestrator
 
         $budget = $this->legBudget();
         $toolsTokens = $this->estimateToolsTokens($tools);
-        if ($this->estimateProjectionTokens($projection) + $toolsTokens <= $budget) {
+        if ($this->requestTokens($projection, $tools) <= $budget) {
             return $projection;
         }
 
@@ -569,7 +673,7 @@ class AgentOrchestrator
 
         $elidedTools = [];
         foreach ($elidible as $index) {
-            if ($this->estimateProjectionTokens($projection) + $toolsTokens <= $budget) {
+            if ($this->requestTokens($projection, $tools) <= $budget) {
                 break;
             }
             $tool = (string) ($projection[$index]['name'] ?? 'the tool');
@@ -615,12 +719,14 @@ class AgentOrchestrator
      * @param list<array<string, mixed>> $unbounded        the full per-call projection, before any bound
      * @param int                        $step             the loop step, for the log lines
      *
-     * @return array{array<string, mixed>, list<array<string, mixed>>} the healed response and the
-     *                                                                 projection it went out with
+     * @return array{array<string, mixed>, list<array<string, mixed>>}|null the healed response and the
+     *                                                                      projection it went out with,
+     *                                                                      or null when nothing smaller
+     *                                                                      than the rejected request fits
      *
      * @throws ContextExceededException when the bounded heals are spent and the call still exceeds
      */
-    private function healContextOverflow(ContextExceededException $error, string $prompt, array $failedProjection, array $tools, array $unbounded, int $step): array
+    private function healContextOverflow(ContextExceededException $error, string $prompt, array $failedProjection, array $tools, array $unbounded, int $step): ?array
     {
         for ($heal = 1; $heal <= self::MAX_CONTEXT_HEALS; ++$heal) {
             $this->learnedLegBudgetTokens = $this->learnBudgetFrom($error, $failedProjection, $tools);
@@ -634,7 +740,17 @@ class AgentOrchestrator
                 $this->learnedLegBudgetTokens
             ));
 
-            $failedProjection = $this->boundProjection($unbounded, $tools, $step);
+            $rebound = $this->boundProjection($unbounded, $tools, $step);
+
+            // A heal that changed nothing, or whose result still does not fit by the provider's
+            // own ruler, would resend a request already known to fail (greenhouse decisions/0514).
+            if ($rebound === $failedProjection
+                || ($this->refusesBeforeEgress() && $this->exceededInputBudget($tools, $rebound) !== null)) {
+                $this->log("Step $step: context heal cannot shrink the request below the window — nothing is resent");
+
+                return null;
+            }
+            $failedProjection = $rebound;
 
             try {
                 $response = $this->generateResponse($prompt, $tools, $failedProjection);
@@ -670,7 +786,10 @@ class AgentOrchestrator
      */
     private function learnBudgetFrom(ContextExceededException $error, array $failedProjection, array $tools): int
     {
-        $measured = $this->estimateProjectionTokens($failedProjection) + $this->estimateToolsTokens($tools);
+        // The provider counted the rejected request: that count calibrates the ruler first
+        // (greenhouse decisions/0514), so the base below is in the provider's units.
+        $this->calibrate($error->nPromptTokens, $failedProjection, $tools);
+        $measured = $this->requestTokens($failedProjection, $tools);
         $base = min($this->legBudget(), $measured);
 
         if ($error->nPromptTokens !== null && $error->nCtx !== null && $error->nPromptTokens > $error->nCtx) {
@@ -839,6 +958,8 @@ class AgentOrchestrator
         // A learned budget is LEG-sticky, not instance-sticky: this leg starts from the declared
         // default, and only its own heals may shrink it.
         $this->learnedLegBudgetTokens = 0;
+        $this->providerTokensPerEstimate = 1.0;
+        $this->rulerCalibrated = false;
 
         // Check for /force command to bypass history
         $forceRefresh = false;
@@ -969,7 +1090,7 @@ class AgentOrchestrator
             // Pause only at a completed-step boundary. An impossible initial request and failures
             // inside provider recovery still fail; this branch neither retries nor repeats tools.
             // The caller retains the total budget, durable session and pending progress recovery.
-            $contextReceipt = $i > 0 ? $this->exceededInputBudget($tools, $paraElModelo) : null;
+            $contextReceipt = $i > 0 && $this->refusesBeforeEgress() ? $this->exceededInputBudget($tools, $paraElModelo) : null;
             if ($contextReceipt !== null) {
                 return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, $contextReceipt + [
                     'completedSteps' => $i,
@@ -990,7 +1111,29 @@ class AgentOrchestrator
                         // Healing without a budget would be guesswork; preserve the provider error.
                         throw $overflow;
                     }
-                    [$response, $paraElModelo] = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
+                    $healed = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
+                    if ($healed === null) {
+                        // NOTHING SMALLER CAN BE SENT (greenhouse decisions/0514): resending an
+                        // identical request is the provider saying no again at full price —
+                        // evidence/1036 paid three identical ~50k-token calls, twice. After a
+                        // completed step this is the between-step pause; on the first call there
+                        // is no completed step to pause after, so the provider's error surfaces.
+                        if ($i === 0) {
+                            throw $overflow;
+                        }
+
+                        return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, [
+                            'source' => 'provider_measured',
+                            'providerPromptTokens' => $overflow->nPromptTokens,
+                            'contextTokens' => $this->contextTokens,
+                            'outputTokens' => $this->reservedOutputTokens(),
+                            'inputLimitTokens' => $this->contextTokens - $this->reservedOutputTokens(),
+                            'completedSteps' => $i,
+                            'progressReceipt' => $noticeThisCall['receipt'] ?? null,
+                            'recovery' => $noticeThisCall['recovery'] ?? null,
+                        ]);
+                    }
+                    [$response, $paraElModelo] = $healed;
                 }
             } catch (InputBudgetExceededException $budget) {
                 // Only a completed-step boundary with matching declared limits permits a pause.
@@ -1005,6 +1148,10 @@ class AgentOrchestrator
                     'recovery' => $noticeThisCall['recovery'] ?? null,
                 ]);
             }
+            // The provider just counted what it received: that count calibrates every later
+            // estimate of this leg (greenhouse decisions/0514).
+            $this->calibrate($this->lastPromptTokens(), $paraElModelo, $tools);
+
             $this->log("Step $i: LLM response - role=" . ($response['role'] ?? 'unknown') .
                 ", has_content=" . (!empty($response['content']) ? 'yes' : 'no') .
                 ", has_tool_calls=" . (isset($response['tool_calls']) ? count($response['tool_calls']) : '0'));
