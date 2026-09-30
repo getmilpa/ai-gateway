@@ -618,9 +618,14 @@ class AgentOrchestrator
      * retry only; it is never accumulated into the history. A second cut ends the leg honestly — the exception says
      * it was already retried — and nothing from either incomplete message is ever executed (0334).
      *
+     * THE RETRY SPENDS A STEP (Rod, decisions/0542): it is a model call like any other, so it takes the next step of
+     * the leg's budget. With no step left there is no retry, and the cut reply ends the leg as it did before.
+     *
      * @param list<array<string, mixed>> $tools    tool summaries riding the call
      * @param list<array<string, mixed>> $messages the bounded projection for this step
      * @param int                        $step     the loop step, for the log lines
+     * @param bool                       $mayRetry whether the leg still has a step for the retry
+     * @param bool                       $retried  out: true when the answer came from the retry (it spent a step)
      *
      * @return array<string, mixed> the decoded response of the first complete reply
      *
@@ -628,11 +633,17 @@ class AgentOrchestrator
      * @throws ContextExceededException     from either call, for the caller's heal
      * @throws InputBudgetExceededException from either call, for the caller's pause
      */
-    private function generateOrRetryTruncated(string $prompt, array $tools, array $messages, int $step): array
+    private function generateOrRetryTruncated(string $prompt, array $tools, array $messages, int $step, bool $mayRetry = true, bool &$retried = false): array
     {
+        $retried = false;
         try {
             return $this->generateResponse($prompt, $tools, $messages);
         } catch (OutputTruncatedException $cut) {
+            if (!$mayRetry) {
+                $this->log("Step $step: reply cut at {$cut->maxTokens} output tokens and no step is left for a retry — the leg ends");
+
+                throw $cut;
+            }
             // The provider counted the request it cut: that count is the best ruler for the room left.
             $this->calibrate($this->lastPromptTokens(), $messages, $tools);
             $retry = $messages;
@@ -641,7 +652,10 @@ class AgentOrchestrator
             $this->log("Step $step: reply cut at {$cut->maxTokens} output tokens — one shortened retry with a limit of $limit");
 
             try {
-                return $this->llm->generateResponse($prompt, $tools, $retry, $limit);
+                $response = $this->llm->generateResponse($prompt, $tools, $retry, $limit);
+                $retried = true;
+
+                return $response;
             } catch (OutputTruncatedException $again) {
                 $this->log("Step $step: the retry was cut too — the leg ends");
 
@@ -1174,7 +1188,12 @@ class AgentOrchestrator
             // other failure, keeps surfacing exactly as before.
             try {
                 try {
-                    $response = $this->generateOrRetryTruncated($prompt, $tools, $paraElModelo, $i);
+                    $spentRetry = false;
+                    $response = $this->generateOrRetryTruncated($prompt, $tools, $paraElModelo, $i, $i + 1 < $this->maxSteps, $spentRetry);
+                    if ($spentRetry) {
+                        // The retry was the leg's next step (decisions/0542).
+                        ++$i;
+                    }
                 } catch (ContextExceededException $overflow) {
                     if ($this->contextTokens <= 0) {
                         // Healing without a budget would be guesswork; preserve the provider error.

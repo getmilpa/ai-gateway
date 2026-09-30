@@ -69,6 +69,40 @@ final class TruncationRetryTest extends TestCase
         self::assertSame(RunEnd::OutputTruncated, $loop->termination()?->reason);
     }
 
+    /**
+     * THE RETRY SPENDS A STEP OF THE LEG (Rod, decisions/0542): it is a second model call, and the step budget counts
+     * model calls. Two steps: the cut reply and its retry use both, so the retry's tool calls run and the leg ends
+     * `steps_exhausted` instead of asking the model a third time.
+     */
+    public function testTheRetrySpendsAStepOfTheLeg(): void
+    {
+        $bodies = [];
+        $client = $this->client('openai', false, $bodies, ['truncated', 'tools', 'final']);
+        $loop = new AgentOrchestrator($this->gateway($client, 'openai', false), $this->mcp(self::exactly(2)), maxSteps: 2, contextTokens: 49152, outputTokens: 8192);
+
+        $loop->run('Perform both writes.');
+        self::assertCount(2, $bodies, 'the retry took the second and last step');
+        self::assertSame(RunEnd::StepsExhausted, $loop->termination()?->reason);
+    }
+
+    /** With no step left there is no retry: the leg ends `output_truncated`, and the exception says it was not retried. */
+    public function testWithNoStepLeftThereIsNoRetry(): void
+    {
+        $bodies = [];
+        $client = $this->client('openai', false, $bodies, ['truncated', 'final']);
+        $loop = new AgentOrchestrator($this->gateway($client, 'openai', false), $this->mcp(self::never()), maxSteps: 1, contextTokens: 49152, outputTokens: 8192);
+
+        try {
+            $loop->run('Answer.');
+            self::fail('A truncated reply became an answer with no step left.');
+        } catch (OutputTruncatedException $e) {
+            self::assertFalse($e->retried);
+            self::assertSame(8192, $e->maxTokens);
+        }
+        self::assertCount(1, $bodies, 'no step left, no retry');
+        self::assertSame(RunEnd::OutputTruncated, $loop->termination()?->reason);
+    }
+
     public function testTheRetryIsPerCallNotPerLeg(): void
     {
         $bodies = [];
