@@ -163,6 +163,14 @@ class AgentOrchestrator
         . 'but delivered an empty answer. State the answer you already reasoned out as plain message '
         . 'content now — no further reasoning, no tool calls.';
 
+    /**
+     * The line the ONE retry of a truncated reply carries (greenhouse decisions/0542). `%d` is the limit the cut
+     * reply hit. It rides a user-role message: qwen's template rejects a system message that is not first (0185).
+     */
+    private const OUTPUT_TRUNCATED_NUDGE = 'Your previous reply reached the output limit of %d tokens and was discarded. '
+        . 'Nothing from it was executed. Reply again, shorter: one tool call at a time, brief reasoning, and write a '
+        . 'large file as several small edits instead of one.';
+
     private LlmService $llm;
     private GatedToolCalls $mcpClient;
     private int $maxSteps;
@@ -599,6 +607,67 @@ class AgentOrchestrator
         }
 
         return $this->llm->generateResponse($prompt, $tools, $messages, $this->reservedOutputTokens());
+    }
+
+    /**
+     * A REPLY CUT AT THE OUTPUT LIMIT GETS ONE SHORTENED RETRY (greenhouse decisions/0542).
+     *
+     * Rod's live run (evidence/1071) lost a whole leg and four minutes to one reply that reached 8,192 tokens, with
+     * 26,562 tokens of the window still free. The same messages go out once more with one user-role line saying what
+     * happened and what to do instead, and with more output when the window leaves room for it. The line rides this
+     * retry only; it is never accumulated into the history. A second cut ends the leg honestly — the exception says
+     * it was already retried — and nothing from either incomplete message is ever executed (0334).
+     *
+     * @param list<array<string, mixed>> $tools    tool summaries riding the call
+     * @param list<array<string, mixed>> $messages the bounded projection for this step
+     * @param int                        $step     the loop step, for the log lines
+     *
+     * @return array<string, mixed> the decoded response of the first complete reply
+     *
+     * @throws OutputTruncatedException     with `retried: true` when the retry is cut as well
+     * @throws ContextExceededException     from either call, for the caller's heal
+     * @throws InputBudgetExceededException from either call, for the caller's pause
+     */
+    private function generateOrRetryTruncated(string $prompt, array $tools, array $messages, int $step): array
+    {
+        try {
+            return $this->generateResponse($prompt, $tools, $messages);
+        } catch (OutputTruncatedException $cut) {
+            // The provider counted the request it cut: that count is the best ruler for the room left.
+            $this->calibrate($this->lastPromptTokens(), $messages, $tools);
+            $retry = $messages;
+            $retry[] = ['role' => 'user', 'content' => sprintf(self::OUTPUT_TRUNCATED_NUDGE, $cut->maxTokens)];
+            $limit = $this->truncationRetryOutputTokens($tools, $retry);
+            $this->log("Step $step: reply cut at {$cut->maxTokens} output tokens — one shortened retry with a limit of $limit");
+
+            try {
+                return $this->llm->generateResponse($prompt, $tools, $retry, $limit);
+            } catch (OutputTruncatedException $again) {
+                $this->log("Step $step: the retry was cut too — the leg ends");
+
+                throw new OutputTruncatedException($again->provider, $again->maxTokens, $again->stopReason, retried: true);
+            }
+        }
+    }
+
+    /**
+     * The output limit of a truncation retry: twice the reserve when the window leaves room for it, else what the
+     * window leaves (minus {@see CONTEXT_HEAL_SAFETY_MARGIN} of it, because the input is an estimate), never less than
+     * the reserve itself. Without a known window, the reserve: an unknown window makes no room claim.
+     *
+     * @param list<array<string, mixed>> $tools    tool summaries riding the retry
+     * @param list<array<string, mixed>> $messages the retry's messages, the nudge included
+     */
+    private function truncationRetryOutputTokens(array $tools, array $messages): int
+    {
+        $reserve = $this->reservedOutputTokens();
+        if ($this->contextTokens <= 0) {
+            return $reserve;
+        }
+        $room = $this->contextTokens - $this->requestTokens($messages, $tools);
+        $room -= (int) ceil($room * self::CONTEXT_HEAL_SAFETY_MARGIN);
+
+        return max($reserve, min(2 * $reserve, $room));
     }
 
     /** One ruler for refusal and the between-step pause; never a provider token count.
@@ -1105,7 +1174,7 @@ class AgentOrchestrator
             // other failure, keeps surfacing exactly as before.
             try {
                 try {
-                    $response = $this->generateResponse($prompt, $tools, $paraElModelo);
+                    $response = $this->generateOrRetryTruncated($prompt, $tools, $paraElModelo, $i);
                 } catch (ContextExceededException $overflow) {
                     if ($this->contextTokens <= 0) {
                         // Healing without a budget would be guesswork; preserve the provider error.

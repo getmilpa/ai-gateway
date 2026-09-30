@@ -11,7 +11,12 @@ declare(strict_types=1);
 
 namespace Milpa\AiGateway;
 
-/** The provider exhausted output tokens; no call from that incomplete message may execute. */
+/**
+ * The provider exhausted output tokens; no call from that incomplete message may execute.
+ *
+ * `retried` is true when the loop already gave the call its one shortened retry and that retry was cut too
+ * (greenhouse decisions/0542): the leg ends here, and the message says so.
+ */
 final class OutputTruncatedException extends \RuntimeException
 {
     /** The limit is the request's value, not a claim about the provider's token usage. */
@@ -19,7 +24,10 @@ final class OutputTruncatedException extends \RuntimeException
         public readonly string $provider,
         public readonly int $maxTokens,
         public readonly string $stopReason = 'length',
+        public readonly bool $retried = false,
     ) {
-        parent::__construct("{$provider} response was truncated ({$stopReason}; requested output limit: {$maxTokens}); no tool calls from this incomplete response were executed.");
+        parent::__construct("{$provider} response was truncated ({$stopReason}; requested output limit: {$maxTokens})"
+            . ($retried ? ' after one shortened retry' : '')
+            . '; no tool calls from this incomplete response were executed.');
     }
 }

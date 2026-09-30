@@ -49,7 +49,8 @@ final class OutputContractTest extends TestCase
             $requests = 0;
             $client = $this->createMock(ClientInterface::class);
             $client->method('sendRequest')->willReturnCallback(function () use (&$requests, $provider, $stream, $truncated): Response {
-                return $this->response($provider, $stream, ++$requests === 1, $truncated && $requests === 1);
+                // Truncated twice: the one shortened retry (decisions/0542) is cut as well.
+                return $this->response($provider, $stream, ++$requests <= ($truncated ? 2 : 1), $truncated && $requests <= 2);
             });
             $mcp = $this->createMock(McpClientService::class);
             $mcp->method('getToolSummaries')->willReturn([['name' => 'write', 'description' => 'Write', 'inputSchema' => []]]);
@@ -62,9 +63,10 @@ final class OutputContractTest extends TestCase
                 $failure = $error;
             }
             self::assertSame($truncated, $failure !== null);
-            self::assertSame($truncated ? 1 : 2, $requests, 'truncation is not retried');
+            self::assertSame(2, $requests, 'a truncation is retried once, never twice');
             if ($failure !== null) {
-                self::assertSame(4096, $failure->maxTokens);
+                self::assertTrue($failure->retried);
+                self::assertSame(4096, $failure->maxTokens, 'no declared window: the retry keeps the reserve');
                 self::assertSame($provider, $failure->provider);
             }
         }

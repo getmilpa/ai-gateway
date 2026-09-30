@@ -85,7 +85,8 @@ final class RunTerminationTest extends TestCase
         $llm = $this->createMock(LlmService::class);
         $calls = 0;
         $llm->method('generateResponse')->willReturnCallback(static function () use (&$calls, $error): array {
-            if (++$calls === 2) {
+            // A truncation is retried once (decisions/0542): the retry is cut too, so the run still fails.
+            if (++$calls === 2 || ($calls === 3 && $error instanceof OutputTruncatedException)) {
                 throw $error;
             }
             return ['role' => 'assistant','content' => self::ANSWER];
@@ -97,7 +98,12 @@ final class RunTerminationTest extends TestCase
             $loop->run('Read');
             self::fail('Expected exception');
         } catch (\Throwable $caught) {
-            self::assertSame($error, $caught);
+            if ($error instanceof OutputTruncatedException) {
+                self::assertInstanceOf(OutputTruncatedException::class, $caught);
+                self::assertTrue($caught->retried);
+            } else {
+                self::assertSame($error, $caught);
+            }
         }
         self::assertSame($reason, $loop->termination()->reason);
         self::assertSame(RunEnd::FinalAnswer, $first->reason);

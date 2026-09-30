@@ -123,13 +123,20 @@ final class OutputBudgetTest extends TestCase
         $message = ['role' => 'assistant','content' => '','tool_calls' => [
             ['id' => 'partial','type' => 'function','function' => ['name' => 'edit','arguments' => '{"edits": [']],
         ]];
-        $http->expects(self::once())->method('sendRequest')->willReturn(new Response(200, [], json_encode(['choices' => [['finish_reason' => 'length','message' => $message]]])));
+        $limits = [];
+        $http->expects(self::exactly(2))->method('sendRequest')->willReturnCallback(static function (RequestInterface $request) use (&$limits, $message): Response {
+            $limits[] = json_decode((string)$request->getBody(), true)['max_completion_tokens'];
+            return new Response(200, [], json_encode(['choices' => [['finish_reason' => 'length','message' => $message]]]));
+        });
         $loop = new AgentOrchestrator(new LlmService('', 'fixture', 'openai', httpClient:$http), $this->tools(), contextTokens:32768, outputTokens:8192);
         try {
             $loop->run('Edit.');
             self::fail('Truncation accepted');
         } catch (OutputTruncatedException $e) {
-            self::assertSame(8192, $e->maxTokens);
+            // The one shortened retry (decisions/0542) asks for twice the reserve the window leaves room for.
+            self::assertSame([8192, 16384], $limits);
+            self::assertSame(16384, $e->maxTokens);
+            self::assertTrue($e->retried);
             self::assertSame('output_truncated', $loop->termination()->toArray()['reason']);
         }
     }
