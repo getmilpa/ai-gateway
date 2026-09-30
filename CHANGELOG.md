@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.39.2](https://github.com/getmilpa/ai-gateway/compare/v0.39.1...v0.39.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **endpoint:** one reading of the base URL for the turn and the catalogue, and a failed run names its endpoint ([#122](https://github.com/getmilpa/ai-gateway/issues/122)) ([f72ad1e](https://github.com/getmilpa/ai-gateway/commit/f72ad1ee5644e86b09c1cf0530d7be86814e1e3f))
+* **orchestrator:** a truncated reply gets one shortened retry, and the return names the model that answered ([#123](https://github.com/getmilpa/ai-gateway/issues/123)) ([13f367d](https://github.com/getmilpa/ai-gateway/commit/13f367d1382aed5c7cb1c62950e8f46c9631f301))
+
 ## [0.39.1](https://github.com/getmilpa/ai-gateway/compare/v0.39.0...v0.39.1) (2026-09-29)
 
 
