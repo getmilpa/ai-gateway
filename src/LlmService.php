@@ -382,8 +382,9 @@ class LlmService implements LlmServiceInterface
                 $streamUsage = null;
                 $streamUri = $this->uri('https://api.openai.com', '/v1/chat/completions');
                 $finishReason = null;
-                $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage, $finishReason);
-                $this->emitReturn($streamUri, $streamUsage);
+                $answeredModel = null;
+                $streamMessage = $this->consumeOpenAiStream($response->getBody(), $this->onStreamChunk, $streamUsage, $finishReason, $answeredModel);
+                $this->emitReturn($streamUri, $streamUsage, $answeredModel);
                 if ($finishReason === 'length') {
                     throw new OutputTruncatedException('openai', $maxTokens);
                 }
@@ -428,7 +429,7 @@ class LlmService implements LlmServiceInterface
             $this->assertSuccessStatus($response, 'OpenAI', $request);
 
             $body = json_decode((string) $response->getBody(), true);
-            $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+            $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null, \is_array($body) ? ($body['model'] ?? null) : null);
             if (($body['choices'][0]['finish_reason'] ?? null) === 'length') {
                 throw new OutputTruncatedException('openai', $maxTokens);
             }
@@ -466,17 +467,18 @@ class LlmService implements LlmServiceInterface
      *
      * @return array<string, mixed>
      */
-    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk, ?array &$usage = null, ?string &$finishReason = null): array
+    private function consumeOpenAiStream(StreamInterface $body, \Closure $onChunk, ?array &$usage = null, ?string &$finishReason = null, ?string &$answeredModel = null): array
     {
         $usage = null;
         $finishReason = null;
+        $answeredModel = null;
         $content = '';
         $reasoning = '';
         /** @var array<int, array{id: string, type: string, function: array{name: string, arguments: string}}> $toolCalls */
         $toolCalls = [];
         $buffer = '';
 
-        $handle = static function (string $line) use (&$content, &$reasoning, &$toolCalls, &$usage, &$finishReason, $onChunk): void {
+        $handle = static function (string $line) use (&$content, &$reasoning, &$toolCalls, &$usage, &$finishReason, &$answeredModel, $onChunk): void {
             if (!str_starts_with($line, 'data:')) {
                 return; // comments (':' keep-alive) and blank separators
             }
@@ -493,6 +495,10 @@ class LlmService implements LlmServiceInterface
             // reaches here before the delta guard would drop it for having no delta.
             if (isset($json['usage']) && \is_array($json['usage'])) {
                 $usage = $json['usage'];
+            }
+            // Every chunk names the model that is answering (greenhouse decisions/0542).
+            if (\is_string($json['model'] ?? null) && $json['model'] !== '') {
+                $answeredModel = $json['model'];
             }
             if (\is_string($json['choices'][0]['finish_reason'] ?? null)) {
                 $finishReason = $json['choices'][0]['finish_reason'];
@@ -648,7 +654,7 @@ class LlmService implements LlmServiceInterface
 
             $rawBody = (string) $response->getBody();
             $body = json_decode($rawBody, true);
-            $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null);
+            $this->emitReturn($anthropicUri, \is_array($body) ? ($body['usage'] ?? null) : null, \is_array($body) ? ($body['model'] ?? null) : null);
             $stopReason = $body['stop_reason'] ?? null;
             if ($stopReason === 'max_tokens' || $stopReason === 'model_context_window_exceeded') {
                 throw new OutputTruncatedException('anthropic', $maxTokens, $stopReason);
@@ -969,9 +975,10 @@ class LlmService implements LlmServiceInterface
      * this seam cannot substantiate is not one it invents. The observer contract forbids throwing,
      * but a broken implementation must not take the run down with it either, so this stays defensive.
      *
-     * @param array<string, mixed>|null $rawUsage The provider's own usage block, unnormalized.
+     * @param array<string, mixed>|null $rawUsage      The provider's own usage block, unnormalized.
+     * @param mixed                     $answeredModel The `model` the response named, when it named one.
      */
-    private function emitReturn(string $uri, ?array $rawUsage): void
+    private function emitReturn(string $uri, ?array $rawUsage, mixed $answeredModel = null): void
     {
         $usage = $this->normalizeUsage($rawUsage);
         $this->lastUsage = $usage;
@@ -979,8 +986,16 @@ class LlmService implements LlmServiceInterface
             return;
         }
 
+        // THE RETURN NAMES WHO ANSWERED (greenhouse decisions/0542). A llama.cpp server ignores the requested name
+        // and serves its own model; recording the request alone wrote a model that never ran in 48 of 48 returns
+        // (evidence/1071). The request stays on the fact as `requested_model` when the two differ.
+        $meta = ['model' => $this->model];
+        if (\is_string($answeredModel) && $answeredModel !== '' && $answeredModel !== $this->model) {
+            $meta = ['model' => $answeredModel, 'requested_model' => $this->model];
+        }
+
         try {
-            $this->channelObserver->observeReturn($uri, ['model' => $this->model, 'usage' => $usage]);
+            $this->channelObserver->observeReturn($uri, $meta + ['usage' => $usage]);
         } catch (\Throwable) {
             // Observing a channel may not change it — and that includes not being able to fell it.
         }
