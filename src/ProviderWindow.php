@@ -103,7 +103,7 @@ final class ProviderWindow
      */
     public function __construct(string $baseUrl, ?callable $fetch = null)
     {
-        $this->root = self::normalise($baseUrl);
+        $this->root = ProviderEndpoint::root($baseUrl);
         $this->fetch = $fetch ?? self::httpFetcher();
     }
 
@@ -196,13 +196,6 @@ final class ProviderWindow
         return \is_int($value) && $value > 0 ? $value : null;
     }
 
-    /** Trim the trailing slash and an explicit `/v1`, so both spellings of a base URL agree. */
-    private static function normalise(string $baseUrl): string
-    {
-        $root = rtrim(trim($baseUrl), '/');
-
-        return str_ends_with($root, '/v1') ? substr($root, 0, -3) : $root;
-    }
 
     /** The production fetcher: a plain GET with a short ceiling, `null` on any failure. */
     private static function httpFetcher(): callable

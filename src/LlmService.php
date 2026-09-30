@@ -147,8 +147,9 @@ class LlmService implements LlmServiceInterface
         $this->apiKey = $apiKey;
         $this->model = $model;
         $this->provider = strtolower($provider);
-        $root = $baseUrl === null ? null : rtrim($baseUrl, '/');
-        $this->ollamaCloud = in_array(strtolower($root ?? ''), ['https://ollama.com', 'https://ollama.com/v1'], true);
+        // One reading of the base URL for every door (greenhouse decisions/0536): `…/v1` and `…` are one server.
+        $root = $baseUrl === null ? null : ProviderEndpoint::root($baseUrl);
+        $this->ollamaCloud = strtolower($root ?? '') === 'https://ollama.com';
         $this->baseUrl = $this->ollamaCloud ? 'https://ollama.com' : $root;
         $this->extraHeaders = $extraHeaders;
         $this->logger = $logger;
@@ -376,7 +377,7 @@ class LlmService implements LlmServiceInterface
                 $flakeRetried = false;
                 $response = $this->sendWithRetries($request, 'OpenAI', $transportRetried, $flakeRetried, stream: true);
 
-                $this->assertSuccessStatus($response, 'OpenAI');
+                $this->assertSuccessStatus($response, 'OpenAI', $request);
 
                 $streamUsage = null;
                 $streamUri = $this->uri('https://api.openai.com', '/v1/chat/completions');
@@ -424,7 +425,7 @@ class LlmService implements LlmServiceInterface
             $flakeRetried = false;
             $response = $this->sendWithRetries($request, 'OpenAI', $transportRetried, $flakeRetried);
 
-            $this->assertSuccessStatus($response, 'OpenAI');
+            $this->assertSuccessStatus($response, 'OpenAI', $request);
 
             $body = json_decode((string) $response->getBody(), true);
             $this->emitReturn($openAiUri, \is_array($body) ? ($body['usage'] ?? null) : null);
@@ -643,7 +644,7 @@ class LlmService implements LlmServiceInterface
             $flakeRetried = false;
             $response = $this->sendWithRetries($request, 'Anthropic', $transportRetried, $flakeRetried);
 
-            $this->assertSuccessStatus($response, 'Anthropic');
+            $this->assertSuccessStatus($response, 'Anthropic', $request);
 
             $rawBody = (string) $response->getBody();
             $body = json_decode($rawBody, true);
@@ -715,9 +716,10 @@ class LlmService implements LlmServiceInterface
      * @throws ContextExceededException when the status is 400 and the body carries the narrow
      *                                  exceed-context signature — same message, typed so the
      *                                  orchestrator can heal it
-     * @throws \RuntimeException        for every other response status >= 400
+     * @throws ProviderRefusedException for every other response status >= 400 — a RuntimeException
+     *                                  with the same message, carrying the status and the endpoint
      */
-    private function assertSuccessStatus(ResponseInterface $response, string $provider): void
+    private function assertSuccessStatus(ResponseInterface $response, string $provider, RequestInterface $request): void
     {
         $statusCode = $response->getStatusCode();
         if ($statusCode < 400) {
@@ -747,7 +749,7 @@ class LlmService implements LlmServiceInterface
             }
         }
 
-        throw new \RuntimeException($message);
+        throw new ProviderRefusedException($message, $statusCode, ProviderEndpoint::shown((string) $request->getUri()));
     }
 
     /**
@@ -868,12 +870,12 @@ class LlmService implements LlmServiceInterface
         $reason = trim($response->getReasonPhrase());
         $status = $reason !== '' ? "{$response->getStatusCode()} {$reason}" : (string) $response->getStatusCode();
 
-        throw new \RuntimeException(sprintf(
+        throw new ProviderRefusedException(sprintf(
             '%s API Error: HTTP %s - %s',
             $provider,
             $status,
             $this->truncateErrorBody($body)
-        ));
+        ), $response->getStatusCode(), ProviderEndpoint::shown((string) $request->getUri()));
     }
 
     /**
@@ -923,7 +925,7 @@ class LlmService implements LlmServiceInterface
                     '%s API Error: transport failed on both of 2 attempts (one retry after a transient failure): %s',
                     $provider,
                     $second->getMessage()
-                ), 0, $second);
+                ), 0, $second, ProviderEndpoint::shown((string) $request->getUri()));
             }
         }
     }

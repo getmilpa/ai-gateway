@@ -28,4 +28,15 @@ namespace Milpa\AiGateway;
  */
 final class TransportRetryExhaustedException extends \RuntimeException
 {
+    /**
+     * @param string          $message  the provider-prefixed message naming both attempts
+     * @param int             $code     unused, kept for the base signature
+     * @param \Throwable|null $previous the second attempt's failure
+     * @param string|null     $endpoint the endpoint neither attempt reached, shown without credentials
+     *                                  ({@see ProviderEndpoint::shown()}) — null from a caller that did not say
+     */
+    public function __construct(string $message = '', int $code = 0, ?\Throwable $previous = null, public readonly ?string $endpoint = null)
+    {
+        parent::__construct($message, $code, $previous);
+    }
 }

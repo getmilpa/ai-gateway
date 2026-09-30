@@ -942,7 +942,7 @@ class AgentOrchestrator
                 $error instanceof RunInterrupted => RunEnd::Interrupted,
                 $error instanceof OutputTruncatedException => RunEnd::OutputTruncated,
                 default => RunEnd::Failed,
-            }, $error instanceof InputBudgetException ? $error->receipt() : null);
+            }, $error instanceof InputBudgetException ? $error->receipt() : null, cause: RunTermination::causeOf($error));
             throw $error;
         }
     }

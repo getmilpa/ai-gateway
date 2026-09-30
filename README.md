@@ -89,6 +89,14 @@ translates the tool list, the message history, and the tool-call response to and
 Anthropic's shape internally, so `AgentOrchestrator` and `McpClientService` never see a
 provider-specific format.
 
+Any OpenAI-compatible or Anthropic-compatible server works through `baseUrl`, written **with or without its
+`/v1`**: `http://llama.local:11438` and `http://llama.local:11438/v1` are the same server. One function reads a
+base URL for every request the gateway makes (`ProviderEndpoint::root()`), so the catalogue question
+(`ProviderReach`, `ProviderWindow`) and the chat call can never disagree about where the model lives. When the
+endpoint answers an HTTP error, the thrown `ProviderRefusedException` keeps the message callers already read and
+adds the status and the endpoint (without credentials); `AgentOrchestrator::termination()` carries them as the
+run's `cause` (`provider_refused`, or `provider_unreachable` when no attempt reached it).
+
 Ollama Cloud uses its OpenAI-compatible endpoint through the same `openai` provider:
 
 ```php
