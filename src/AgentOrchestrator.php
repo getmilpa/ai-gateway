@@ -196,6 +196,29 @@ class AgentOrchestrator
         return $this;
     }
 
+    /** @var (\Closure(list<array<string, mixed>>): string)|null */
+    private ?\Closure $trailingProjection = null;
+
+    /**
+     * Project one message AFTER the conversation, for this request only, from the exact outgoing tool offer.
+     *
+     * For what a caller must tell the model and GROWS during a run. Written into the system prompt, such text
+     * changes what comes BEFORE the conversation, so no request is a prefix of the next and the provider reads
+     * the whole prompt again on every step (greenhouse evidence/1109: 13 cold calls of 19). After the
+     * conversation, each request prolongs the one before. It rides as a user-role message — provider chat
+     * templates reject a system message that is not at the beginning — it is never accumulated into the
+     * history, and an empty string adds nothing. Null preserves the legacy path; a projection that fails
+     * surfaces before contacting the model.
+     *
+     * @param (callable(list<array<string, mixed>>): string)|null $projection
+     */
+    public function setTrailingProjection(?callable $projection): self
+    {
+        $this->trailingProjection = $projection === null ? null : \Closure::fromCallable($projection);
+
+        return $this;
+    }
+
     private ?RunTermination $termination = null;
 
     /** The latest base-loop exit; null before a run or while that run is in progress. */
@@ -1143,6 +1166,14 @@ class AgentOrchestrator
             if ($plan !== null && trim($plan) !== '') {
                 $paraElModelo[] = ['role' => 'system', 'content' => $plan];
                 $this->log("Step $i: plan reprojected (" . \strlen($plan) . " bytes)");
+            }
+
+            // WHAT GROWS RIDES LAST, ON THIS CALL'S COPY ONLY (greenhouse evidence/1109): everything above
+            // it is what the previous request already sent, so the provider's prompt cache holds. Before
+            // the stall notice, which keeps the last word.
+            $trailing = $this->trailingProjection !== null ? ($this->trailingProjection)($tools) : '';
+            if ($trailing !== '') {
+                $paraElModelo[] = ['role' => 'user', 'content' => $trailing];
             }
 
             // THE STALL NOTICE RIDES THIS CALL ONLY — one appended system line on the per-step
