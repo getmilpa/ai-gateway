@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/getmilpa/ai-gateway/compare/v0.39.2...v0.40.0) (2026-10-06)
+
+
+### Features
+
+* **orchestrator:** what grows during a run rides after the conversation ([#125](https://github.com/getmilpa/ai-gateway/issues/125)) ([14eb1d8](https://github.com/getmilpa/ai-gateway/commit/14eb1d8abfd603e08c0962940e57bfe7d3939ecb))
+
 ## [0.39.2](https://github.com/getmilpa/ai-gateway/compare/v0.39.1...v0.39.2) (2026-09-30)
 
 
