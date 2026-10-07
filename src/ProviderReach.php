@@ -22,9 +22,9 @@ namespace Milpa\AiGateway;
  * Nothing in this framework could say «there is no reachable model». Every surface that showed one
  * READ IT FROM CONFIG: the Desktop's footer printed `Model: qwen3.8-27b` whether or not anything was
  * listening, because it resolved `agent.model` with a hardcoded fallback — and its endpoint fallback
- * named `llama.local`, a host that stopped resolving when that machine moved to Tailscale. Measured
- * 2026-09-09: `llama.tailf880b7.ts.net:11438/v1/models` answers 200, `llama.local:11438` answers 000
- * (greenhouse decisions/0266).
+ * named `llama.local`, a host that stopped resolving when that machine moved to a private network.
+ * Measured 2026-09-09: under its name on that network `:11438/v1/models` answers 200, and
+ * `llama.local:11438` answers 000 (greenhouse decisions/0266).
  *
  * So a surface asserted a model it had never asked. That is the mistake this house calls its most
  * expensive — asking the TEXT what only EXECUTION answers — committed by the one line a person reads
