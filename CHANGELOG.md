@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/getmilpa/ai-gateway/compare/v0.40.0...v0.41.0) (2026-10-07)
+
+
+### Features
+
+* **orchestrator:** a run can open with a tool call its caller already holds ([#126](https://github.com/getmilpa/ai-gateway/issues/126)) ([c79d166](https://github.com/getmilpa/ai-gateway/commit/c79d1664652fcbcb0a97e5e92f9813384f85553f))
+
 ## [0.40.0](https://github.com/getmilpa/ai-gateway/compare/v0.39.2...v0.40.0) (2026-10-06)
 
 
