@@ -37,8 +37,8 @@ final class ProviderWindowTest extends TestCase
 
     public function testItAnswersTheWindowTheServerAllocatedAndNotTheOneTheModelWasTrainedFor(): void
     {
-        $reader = new ProviderWindow('http://llama.tailf880b7.ts.net:11438', $this->serving([
-            'http://llama.tailf880b7.ts.net:11438/v1/models' => self::MODELS_AS_MEASURED,
+        $reader = new ProviderWindow('http://llama.tailnet.example:11438', $this->serving([
+            'http://llama.tailnet.example:11438/v1/models' => self::MODELS_AS_MEASURED,
         ]));
 
         self::assertSame(32768, $reader->tokens(), 'n_ctx is the ceiling; n_ctx_train is 262144 and must not be it');
