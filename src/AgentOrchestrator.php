@@ -327,6 +327,47 @@ class AgentOrchestrator
         $this->contextTokens = $contextTokens;
     }
 
+    /** @var array<string, mixed>|null */
+    private ?array $openingMove = null;
+
+    /**
+     * Open the next run with tool calls the caller already holds, instead of asking the model for them.
+     *
+     * For a call the caller knows deterministically: the one it recorded, that was refused, and whose refusal a
+     * person has since lifted. The loop takes the message as the reply to its first step WITHOUT contacting the
+     * provider; the calls then go through the same executor as any other — gate, recording, budget — the step
+     * counts against the ceiling, and the model reads the call and its result as its own conversation on the
+     * next step. It is played once. Null withdraws it.
+     *
+     * An opening move is tool calls and nothing else: words are never put in the model's mouth.
+     *
+     * @param array<string, mixed>|null $assistantMessage `role: assistant`, empty `content`, and `tool_calls`
+     *                                                    in the provider's shape (id, function.name, function.arguments as JSON text)
+     *
+     * @throws \InvalidArgumentException when the message carries content, no call, or a malformed call
+     */
+    public function setOpeningMove(?array $assistantMessage): self
+    {
+        if ($assistantMessage !== null) {
+            $calls = $assistantMessage['tool_calls'] ?? null;
+            $wellFormed = ($assistantMessage['role'] ?? null) === 'assistant'
+                && \in_array($assistantMessage['content'] ?? '', ['', null], true)
+                && \is_array($calls) && $calls !== [] && array_is_list($calls);
+            foreach ($wellFormed ? $calls : [] as $call) {
+                $function = \is_array($call) ? ($call['function'] ?? null) : null;
+                $wellFormed = $wellFormed && \is_array($function) && \is_string($call['id'] ?? null) && $call['id'] !== ''
+                    && \is_string($function['name'] ?? null) && $function['name'] !== ''
+                    && \is_string($function['arguments'] ?? null) && \is_array(json_decode($function['arguments'], true));
+            }
+            if (!$wellFormed) {
+                throw new \InvalidArgumentException('An opening move is tool calls its caller holds, with their arguments as JSON text, and no words.');
+            }
+        }
+        $this->openingMove = $assistantMessage;
+
+        return $this;
+    }
+
     /**
      * Get the last ToolResult from tool execution.
      * Used by ProcessTelegramMessageJob to build keyboard from metadata.
@@ -1217,59 +1258,66 @@ class AgentOrchestrator
             // only when a budget exists to shrink (run 12, Rod's ruling): the provider named the
             // overage, so the leg heals itself instead of dying. An unbudgeted caller, and every
             // other failure, keeps surfacing exactly as before.
-            try {
+            // THE OPENING MOVE IS THE REPLY TO THIS STEP (greenhouse decisions/0577): a tool call the caller
+            // already holds is not bought from the provider again. It is taken once, and what follows — the
+            // door, the recording, the probe, the step it spends — is the loop as it always was.
+            $response = $this->openingMove;
+            $this->openingMove = null;
+            if ($response === null) {
                 try {
-                    $spentRetry = false;
-                    $response = $this->generateOrRetryTruncated($prompt, $tools, $paraElModelo, $i, $i + 1 < $this->maxSteps, $spentRetry);
-                    if ($spentRetry) {
-                        // The retry was the leg's next step (decisions/0542).
-                        ++$i;
-                    }
-                } catch (ContextExceededException $overflow) {
-                    if ($this->contextTokens <= 0) {
-                        // Healing without a budget would be guesswork; preserve the provider error.
-                        throw $overflow;
-                    }
-                    $healed = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
-                    if ($healed === null) {
-                        // NOTHING SMALLER CAN BE SENT (greenhouse decisions/0514): resending an
-                        // identical request is the provider saying no again at full price —
-                        // evidence/1036 paid three identical ~50k-token calls, twice. After a
-                        // completed step this is the between-step pause; on the first call there
-                        // is no completed step to pause after, so the provider's error surfaces.
-                        if ($i === 0) {
+                    try {
+                        $spentRetry = false;
+                        $response = $this->generateOrRetryTruncated($prompt, $tools, $paraElModelo, $i, $i + 1 < $this->maxSteps, $spentRetry);
+                        if ($spentRetry) {
+                            // The retry was the leg's next step (decisions/0542).
+                            ++$i;
+                        }
+                    } catch (ContextExceededException $overflow) {
+                        if ($this->contextTokens <= 0) {
+                            // Healing without a budget would be guesswork; preserve the provider error.
                             throw $overflow;
                         }
+                        $healed = $this->healContextOverflow($overflow, $prompt, $paraElModelo, $tools, $sinAcotar, $i);
+                        if ($healed === null) {
+                            // NOTHING SMALLER CAN BE SENT (greenhouse decisions/0514): resending an
+                            // identical request is the provider saying no again at full price —
+                            // evidence/1036 paid three identical ~50k-token calls, twice. After a
+                            // completed step this is the between-step pause; on the first call there
+                            // is no completed step to pause after, so the provider's error surfaces.
+                            if ($i === 0) {
+                                throw $overflow;
+                            }
 
-                        return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, [
-                            'source' => 'provider_measured',
-                            'providerPromptTokens' => $overflow->nPromptTokens,
-                            'contextTokens' => $this->contextTokens,
-                            'outputTokens' => $this->reservedOutputTokens(),
-                            'inputLimitTokens' => $this->contextTokens - $this->reservedOutputTokens(),
-                            'completedSteps' => $i,
-                            'progressReceipt' => $noticeThisCall['receipt'] ?? null,
-                            'recovery' => $noticeThisCall['recovery'] ?? null,
-                        ]);
+                            return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, [
+                                'source' => 'provider_measured',
+                                'providerPromptTokens' => $overflow->nPromptTokens,
+                                'contextTokens' => $this->contextTokens,
+                                'outputTokens' => $this->reservedOutputTokens(),
+                                'inputLimitTokens' => $this->contextTokens - $this->reservedOutputTokens(),
+                                'completedSteps' => $i,
+                                'progressReceipt' => $noticeThisCall['receipt'] ?? null,
+                                'recovery' => $noticeThisCall['recovery'] ?? null,
+                            ]);
+                        }
+                        [$response, $paraElModelo] = $healed;
                     }
-                    [$response, $paraElModelo] = $healed;
-                }
-            } catch (InputBudgetExceededException $budget) {
-                // Only a completed-step boundary with matching declared limits permits a pause.
-                // Initial, unknown-context and mismatched-adapter failures remain explicit errors.
-                if ($i === 0 || $budget->contextTokens !== $this->contextTokens || $budget->outputTokens !== ($this->outputTokens ?? 4096)) {
-                    throw $budget;
-                }
+                } catch (InputBudgetExceededException $budget) {
+                    // Only a completed-step boundary with matching declared limits permits a pause.
+                    // Initial, unknown-context and mismatched-adapter failures remain explicit errors.
+                    if ($i === 0 || $budget->contextTokens !== $this->contextTokens || $budget->outputTokens !== ($this->outputTokens ?? 4096)) {
+                        throw $budget;
+                    }
 
-                return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, $budget->receipt() + [
-                    'completedSteps' => $i,
-                    'progressReceipt' => $noticeThisCall['receipt'] ?? null,
-                    'recovery' => $noticeThisCall['recovery'] ?? null,
-                ]);
+                    return $this->finish(RunEnd::ContextBudgetExhausted, self::CONTEXT_BUDGET_EXHAUSTED, $budget->receipt() + [
+                        'completedSteps' => $i,
+                        'progressReceipt' => $noticeThisCall['receipt'] ?? null,
+                        'recovery' => $noticeThisCall['recovery'] ?? null,
+                    ]);
+                }
+                // The provider just counted what it received: that count calibrates every later
+                // estimate of this leg (greenhouse decisions/0514).
+                $this->calibrate($this->lastPromptTokens(), $paraElModelo, $tools);
             }
-            // The provider just counted what it received: that count calibrates every later
-            // estimate of this leg (greenhouse decisions/0514).
-            $this->calibrate($this->lastPromptTokens(), $paraElModelo, $tools);
 
             $this->log("Step $i: LLM response - role=" . ($response['role'] ?? 'unknown') .
                 ", has_content=" . (!empty($response['content']) ? 'yes' : 'no') .
