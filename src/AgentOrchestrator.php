@@ -368,6 +368,55 @@ class AgentOrchestrator
         return $this;
     }
 
+    /** @var (\Closure(string, array<string, mixed>, mixed): mixed)|null */
+    private ?\Closure $continuation = null;
+
+    /**
+     * Let the caller play the calls that follow deterministically from a tool call, instead of asking the model.
+     *
+     * After every tool call that ran, the continuation is asked with the tool, its arguments and what it
+     * answered. It answers null, or a list of `{name, arguments}` calls that follow from it — the promotion of
+     * a verified trial of an operation its house applies, say. The loop plays them as its NEXT STEP without
+     * contacting the provider: one assistant message with those calls, through the same executor as any other —
+     * gate, recording, budget. A continued call spends a step of the ceiling, may be refused like any call, and
+     * may itself be continued. One the run did not reach is dropped, never carried into another run.
+     *
+     * A continuation answers with tool calls or nothing: anything else fails the run.
+     *
+     * @param (callable(string, array<string, mixed>, mixed): mixed)|null $continuation
+     */
+    public function setContinuation(?callable $continuation): self
+    {
+        $this->continuation = $continuation === null ? null : \Closure::fromCallable($continuation);
+
+        return $this;
+    }
+
+    /**
+     * The calls a continuation answered with, as the assistant message the loop plays next.
+     *
+     * @param list<mixed> $calls
+     *
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException when an entry is not a `{name, arguments}` call
+     */
+    private static function continued(array $calls, int $step): array
+    {
+        $toolCalls = [];
+        foreach ($calls as $n => $call) {
+            if (!\is_array($call) || !\is_string($call['name'] ?? null) || $call['name'] === '' || !\is_array($call['arguments'] ?? null)) {
+                throw new \InvalidArgumentException('A continuation answers with tool calls — a name and its arguments — or nothing.');
+            }
+            $toolCalls[] = ['id' => "continued-{$step}-{$n}", 'type' => 'function', 'function' => [
+                'name' => $call['name'],
+                'arguments' => (string) json_encode($call['arguments'] === [] ? new \stdClass() : $call['arguments'], \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE),
+            ]];
+        }
+
+        return ['role' => 'assistant', 'content' => '', 'tool_calls' => $toolCalls];
+    }
+
     /**
      * Get the last ToolResult from tool execution.
      * Used by ProcessTelegramMessageJob to build keyboard from metadata.
@@ -1091,6 +1140,10 @@ class AgentOrchestrator
                 default => RunEnd::Failed,
             }, $error instanceof InputBudgetException ? $error->receipt() : null, cause: RunTermination::causeOf($error));
             throw $error;
+        } finally {
+            // A move the run did not reach — an opening the caller set, a continuation the ceiling cut — is never
+            // carried into another run.
+            $this->openingMove = null;
         }
     }
 
@@ -1336,6 +1389,8 @@ class AgentOrchestrator
                     }
                 }
 
+                /** @var list<mixed> $continued what this step's calls are followed by, for the house to play next */
+                $continued = [];
                 foreach ($response['tool_calls'] as $toolCall) {
                     $functionName = $toolCall['function']['name'];
                     $rawArguments = $toolCall['function']['arguments'] ?? '';
@@ -1361,6 +1416,8 @@ class AgentOrchestrator
                     // DEBUG: Log raw arguments before parsing
                     $this->log("Step $i: 🔧 RAW ARGUMENTS (length=" . strlen($rawArguments) . "): " . substr($rawArguments, 0, 2000));
 
+                    $ran = false;
+                    $toolResult = null;
                     $functionArgs = json_decode($rawArguments, true);
                     $jsonError = json_last_error();
 
@@ -1470,6 +1527,7 @@ class AgentOrchestrator
 
                         // Store tool result for appending to final response
                         $toolResults[] = $output;
+                        $ran = true;
                     } catch (ToolCallRefused $e) {
                         // UNA NEGATIVA TERMINA LA VUELTA — no se le devuelve al modelo.
                         //
@@ -1501,6 +1559,17 @@ class AgentOrchestrator
                         $this->log("Step $i: ❌ TOOL ERROR '$functionName': " . $e->getMessage());
                     }
 
+                    // WHAT FOLLOWS FROM THIS CALL, IF ITS CALLER SAYS SO (greenhouse decisions/0586): asked only of
+                    // a call that ran, outside the handling of the tool's own failures, and played below as the
+                    // loop's next step.
+                    $follows = $ran && $this->continuation !== null ? ($this->continuation)($functionName, $functionArgs, $toolResult) : null;
+                    if ($follows !== null) {
+                        if (!\is_array($follows) || !array_is_list($follows)) {
+                            throw new \InvalidArgumentException('A continuation answers with tool calls — a name and its arguments — or nothing.');
+                        }
+                        array_push($continued, ...$follows);
+                    }
+
                     // 4. Feed result back — BOUNDED to the model's window (evidence/0440). The full
                     // result already reached the session log; what returns to the window is derived,
                     // never the raw dump that would overflow a small-window model in one step.
@@ -1510,6 +1579,12 @@ class AgentOrchestrator
                         'name' => $functionName,
                         'content' => $this->boundToolResult($output),
                     ];
+                }
+
+                // THE HOUSE'S MOVE IS THE REPLY TO THE NEXT STEP: what followed from this step's calls is taken
+                // there instead of a provider call, exactly as an opening move is taken at the first.
+                if ($continued !== []) {
+                    $this->openingMove = self::continued($continued, $i);
                 }
 
                 // The producer judges the completed step. Preparation may continue, but calling
