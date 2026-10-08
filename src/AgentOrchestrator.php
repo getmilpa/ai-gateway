@@ -392,6 +392,44 @@ class AgentOrchestrator
         return $this;
     }
 
+    /** @var (\Closure(string, array<string, mixed>, string): mixed)|null */
+    private ?\Closure $unofferedCall = null;
+
+    /**
+     * Tell the caller of a call the loop turned away because its tool was not offered in that step.
+     *
+     * A model can name a tool absent from the catalogue sent on a step — one its caller left out, or one that does
+     * not exist. The loop answers that call itself and never asks the registry, so nobody else heard of it: a house
+     * that keeps a session's log had no trace that the session tried (greenhouse decisions/0601, evidence/1163 §10).
+     * With this the caller is told, once per such call and in the order they came: the tool that was named, its
+     * arguments, and the very answer the model reads.
+     *
+     * Being told changes nothing: the answer is the same, the offer is the same, and the registry is still not
+     * asked. A teller that fails loses the telling, never the run. Null withdraws it.
+     *
+     * @param (callable(string, array<string, mixed>, string): mixed)|null $told
+     */
+    public function setUnofferedCall(?callable $told): self
+    {
+        $this->unofferedCall = $told === null ? null : \Closure::fromCallable($told);
+
+        return $this;
+    }
+
+    /** Arguments that are no JSON object — none, null, a bare scalar, broken text — are the empty argument set. */
+    private function tellOfAnUnofferedCall(string $tool, mixed $rawArguments, string $answer): void
+    {
+        if ($this->unofferedCall === null) {
+            return;
+        }
+        $arguments = \is_string($rawArguments) ? json_decode($rawArguments, true) : $rawArguments;
+        try {
+            ($this->unofferedCall)($tool, \is_array($arguments) ? $arguments : [], $answer);
+        } catch (\Throwable) {
+            // Being told may not change what the loop does — and that includes not being able to fell it.
+        }
+    }
+
     /**
      * The calls a continuation answered with, as the assistant message the loop plays next.
      *
@@ -1403,6 +1441,7 @@ class AgentOrchestrator
                         $output = "Tool '{$functionName}' was not offered in this step. Choose from the current catalogue: "
                             . implode(', ', array_column($tools, 'name')) . '.';
                         $this->log("Step $i: ⛔ UNOFFERED TOOL '$functionName': no registry call");
+                        $this->tellOfAnUnofferedCall($functionName, $rawArguments, $output);
                         $messages[] = [
                             'role' => 'tool',
                             'tool_call_id' => $toolCall['id'],
