@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.1](https://github.com/getmilpa/ai-gateway/compare/v0.41.0...v0.41.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* what Composer installs carries no tests, nor the name of a private network ([#134](https://github.com/getmilpa/ai-gateway/issues/134)) ([4bd67dd](https://github.com/getmilpa/ai-gateway/commit/4bd67ddb350ae5f64fc685436d6cf3f757634788))
+
 ## [0.41.0](https://github.com/getmilpa/ai-gateway/compare/v0.40.0...v0.41.0) (2026-10-07)
 
 
