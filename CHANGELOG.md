@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.42.0](https://github.com/getmilpa/ai-gateway/compare/v0.41.1...v0.42.0) (2026-10-08)
+
+
+### Features
+
+* **orchestrator:** the caller is told of a call the loop turned away because its tool was not offered ([2ae9176](https://github.com/getmilpa/ai-gateway/commit/2ae9176d96723f68a381641380c253c820830d7a))
+* **orchestrator:** the caller plays the calls that follow from a tool call ([2ae9176](https://github.com/getmilpa/ai-gateway/commit/2ae9176d96723f68a381641380c253c820830d7a))
+
 ## [0.41.1](https://github.com/getmilpa/ai-gateway/compare/v0.41.0...v0.41.1) (2026-10-08)
 
 
