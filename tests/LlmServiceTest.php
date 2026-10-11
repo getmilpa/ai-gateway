@@ -755,7 +755,7 @@ class LlmServiceTest extends TestCase
             null,
             null,
             baseUrl: 'https://model.example/',
-            extraHeaders: ['Authorization' => 'Basic ' . base64_encode('llama:llam4')],
+            extraHeaders: ['Authorization' => 'Basic ' . base64_encode('example-user:example-password')],
         );
 
         $service->generateResponse('hola');
@@ -767,7 +767,7 @@ class LlmServiceTest extends TestCase
             'la barra final del baseUrl no puede duplicarse',
         );
         self::assertSame(
-            'Basic ' . base64_encode('llama:llam4'),
+            'Basic ' . base64_encode('example-user:example-password'),
             $vistas[0]->getHeaderLine('Authorization'),
             'el encabezado del host reemplaza al Bearer del proveedor',
         );
