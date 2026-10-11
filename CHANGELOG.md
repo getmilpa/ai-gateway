@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.1](https://github.com/getmilpa/ai-gateway/compare/v0.42.0...v0.42.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* no comment, example or fixture names a lab machine (greenhouse evidence/1144) ([#137](https://github.com/getmilpa/ai-gateway/issues/137)) ([58bc699](https://github.com/getmilpa/ai-gateway/commit/58bc6994eadeddd3cd8f85f279bf036068762ada))
+
 ## [0.42.0](https://github.com/getmilpa/ai-gateway/compare/v0.41.1...v0.42.0) (2026-10-08)
 
 
