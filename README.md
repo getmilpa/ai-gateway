@@ -90,7 +90,7 @@ Anthropic's shape internally, so `AgentOrchestrator` and `McpClientService` neve
 provider-specific format.
 
 Any OpenAI-compatible or Anthropic-compatible server works through `baseUrl`, written **with or without its
-`/v1`**: `http://llama.local:11438` and `http://llama.local:11438/v1` are the same server. One function reads a
+`/v1`**: `http://model.example:11438` and `http://model.example:11438/v1` are the same server. One function reads a
 base URL for every request the gateway makes (`ProviderEndpoint::root()`), so the catalogue question
 (`ProviderReach`, `ProviderWindow`) and the chat call can never disagree about where the model lives. When the
 endpoint answers an HTTP error, the thrown `ProviderRefusedException` keeps the message callers already read and

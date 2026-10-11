@@ -118,7 +118,7 @@ final class OllamaCloudTest extends TestCase
             'qwen3.8-27b',
             'openai',
             httpClient: $localHttp,
-            baseUrl: 'http://llama.local:11438/v1'
+            baseUrl: 'http://model.example:11438/v1'
         ))
             ->withOllamaReasoningEffort('low')
             ->generateResponse('Build it.', [[
@@ -157,7 +157,7 @@ final class OllamaCloudTest extends TestCase
                 'qwen3.8-27b',
                 'openai',
                 httpClient: $http,
-                baseUrl: 'http://llama.local:11438/v1'
+                baseUrl: 'http://model.example:11438/v1'
             ))
                 ->withOpenAiThinking($enabled)
                 ->generateResponse('Build it.', maxTokens: 8192);

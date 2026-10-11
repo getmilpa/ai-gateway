@@ -754,7 +754,7 @@ class LlmServiceTest extends TestCase
             $cliente,
             null,
             null,
-            baseUrl: 'https://llama.local/',
+            baseUrl: 'https://model.example/',
             extraHeaders: ['Authorization' => 'Basic ' . base64_encode('llama:llam4')],
         );
 
@@ -762,7 +762,7 @@ class LlmServiceTest extends TestCase
 
         self::assertCount(1, $vistas);
         self::assertSame(
-            'https://llama.local/v1/chat/completions',
+            'https://model.example/v1/chat/completions',
             (string) $vistas[0]->getUri(),
             'la barra final del baseUrl no puede duplicarse',
         );

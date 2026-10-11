@@ -21,7 +21,7 @@ use PHPUnit\Framework\TestCase;
  * THE HOUSE ASKS WHETHER A MODEL ANSWERS, instead of reading what config claims.
  *
  * Nothing could say «there is no reachable model»: every surface read `agent.model` from config, and
- * the Desktop's footer printed one with a hardcoded fallback whose endpoint named `llama.local` — a
+ * the Desktop's footer printed one with a hardcoded fallback whose endpoint named a lab machine — a
  * host that stopped resolving when that machine moved to Tailscale (greenhouse decisions/0266).
  *
  * Measured against the real provider while writing this: the live endpoint answers `/v1/models` with
